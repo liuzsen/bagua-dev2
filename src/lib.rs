@@ -1,3 +1,6 @@
+#![allow(async_fn_in_trait)]
+
 pub mod entity;
 pub mod json;
 pub mod result;
+pub mod usecase;
