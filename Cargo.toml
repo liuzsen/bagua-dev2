@@ -7,6 +7,7 @@ edition = "2021"
 replace_with = "0.1.7"
 serde = { version = "1", features = ["derive"] }
 indexmap = { version = "2.6.0", features = ["serde"] }
+anyhow = "1"
 
 [dev-dependencies]
 indexmap = { version = "2.6.0", features = ["serde"] }
