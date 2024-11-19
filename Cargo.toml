@@ -4,3 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+replace_with = "0.1.7"
+serde = { version = "1", features = ["derive"] }
+indexmap = { version = "2.6.0", features = ["serde"] }
+
+[dev-dependencies]
+indexmap = { version = "2.6.0", features = ["serde"] }
+serde_json = "1.0.133"
