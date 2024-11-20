@@ -4,6 +4,35 @@ use std::{
     marker::PhantomData,
 };
 
+pub trait Provider: Sized {
+    fn build(ctx: &mut ProviderContext) -> anyhow::Result<Self>;
+
+    #[allow(dead_code)]
+    fn provide() -> anyhow::Result<Self> {
+        let mut ctx = ProviderContext::new();
+        Self::build(&mut ctx)
+    }
+
+    fn provide_with(f: impl FnOnce(&mut ProviderContext)) -> anyhow::Result<Self> {
+        let mut ctx = ProviderContext::new();
+        f(&mut ctx);
+        Self::build(&mut ctx)
+    }
+}
+
+pub trait SingletonProvider: Provider + Clone + 'static {
+    fn build_single(ctx: &mut crate::provider::ProviderContext) -> anyhow::Result<Self> {
+        match ctx.get::<Self>() {
+            Some(this) => Ok(this.clone()),
+            None => {
+                let this = Self::build(ctx)?;
+                ctx.insert(this.clone());
+                Ok(this)
+            }
+        }
+    }
+}
+
 pub struct ProviderContext {
     map: HashMap<TypeId, Box<dyn Any>>,
 }
@@ -48,22 +77,6 @@ impl ProviderContext {
 
 fn downcast_owned<T: 'static>(boxed: Box<dyn Any>) -> Option<T> {
     boxed.downcast().ok().map(|boxed| *boxed)
-}
-
-pub trait Provider: Sized {
-    fn build(ctx: &mut ProviderContext) -> anyhow::Result<Self>;
-
-    #[allow(dead_code)]
-    fn provide() -> anyhow::Result<Self> {
-        let mut ctx = ProviderContext::new();
-        Self::build(&mut ctx)
-    }
-
-    fn provide_with(f: impl FnOnce(&mut ProviderContext)) -> anyhow::Result<Self> {
-        let mut ctx = ProviderContext::new();
-        f(&mut ctx);
-        Self::build(&mut ctx)
-    }
 }
 
 impl<T> Provider for PhantomData<T> {
