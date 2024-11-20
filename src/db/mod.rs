@@ -1,4 +1,5 @@
 pub mod diesel;
+pub mod transaction;
 
 pub trait DbDriver {
     type Connection;

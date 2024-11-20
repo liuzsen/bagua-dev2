@@ -9,6 +9,8 @@ serde = { version = "1", features = ["derive"] }
 indexmap = { version = "2.6.0", features = ["serde"] }
 anyhow = "1"
 serde_json = "1.0.133"
+futures = "0.3.31"
+tracing = "0.1.40"
 
 [dependencies.diesel-async]
 version = "0.5.1"
@@ -19,10 +21,17 @@ optional = true
 version = "2.2"
 optional = true
 
+[dependencies.tokio]
+version = "1"
+features = ["full"]
+optional = true
+
 [dev-dependencies]
 indexmap = { version = "2.6.0", features = ["serde"] }
 serde_json = "1"
+tokio = { version = "1.41.1", features = ["full"] }
 
 [features]
-default = ["diesel"]
+default = ["diesel", "tokio"]
 diesel = ["dep:diesel", "dep:diesel-async"]
+tokio = ["dep:tokio"]
