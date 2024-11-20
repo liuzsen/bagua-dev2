@@ -4,7 +4,7 @@ use std::{
     marker::PhantomData,
 };
 
-pub trait Provider: Sized {
+pub trait Provider: Sized + 'static {
     fn build(ctx: &mut ProviderContext) -> anyhow::Result<Self>;
 
     #[allow(dead_code)]
@@ -22,14 +22,13 @@ pub trait Provider: Sized {
 
 pub trait SingletonProvider: Provider + Clone + 'static {
     fn build_single(ctx: &mut crate::provider::ProviderContext) -> anyhow::Result<Self> {
-        match ctx.get::<Self>() {
-            Some(this) => Ok(this.clone()),
-            None => {
-                let this = Self::build(ctx)?;
-                ctx.insert(this.clone());
-                Ok(this)
-            }
+        if let Some(this) = ctx.get::<Self>() {
+            return Ok(this.clone());
         }
+
+        let this = Self::build(ctx)?;
+        ctx.insert(this.clone());
+        Ok(this)
     }
 }
 
@@ -79,7 +78,10 @@ fn downcast_owned<T: 'static>(boxed: Box<dyn Any>) -> Option<T> {
     boxed.downcast().ok().map(|boxed| *boxed)
 }
 
-impl<T> Provider for PhantomData<T> {
+impl<T> Provider for PhantomData<T>
+where
+    T: 'static,
+{
     fn build(_ctx: &mut ProviderContext) -> anyhow::Result<Self> {
         Ok(PhantomData)
     }

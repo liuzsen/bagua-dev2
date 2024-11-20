@@ -27,7 +27,7 @@ pub trait TxHandler: 'static {
     fn handle(self: Box<Self>, tx_result: TxResult);
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum TxResult {
     Committed,
     RolledBack,
