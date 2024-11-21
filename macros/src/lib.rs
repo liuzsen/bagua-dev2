@@ -3,6 +3,7 @@ use proc_macro::TokenStream;
 mod entity;
 mod get_config;
 mod has_changed;
+mod init;
 mod provider;
 
 #[proc_macro_derive(Provider, attributes(provider))]
@@ -68,4 +69,21 @@ pub fn derive_get_config(input: TokenStream) -> TokenStream {
         .expand()
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+#[allow(non_snake_case)]
+#[proc_macro_attribute]
+pub fn InitFunction(args: TokenStream, item: TokenStream) -> TokenStream {
+    let entity = syn::parse_macro_input!(item as init::InitMethod);
+    let ext_fields = syn::parse_macro_input!(args as init::ExtFields);
+    let output = entity.expand(ext_fields).unwrap_or_else(|err| {
+        let err = err.to_compile_error();
+        quote::quote! {
+            #err
+        }
+    });
+
+    let stream: TokenStream = output.into();
+
+    stream
 }

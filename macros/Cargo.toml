@@ -21,3 +21,5 @@ syn = { version = "2.0.55", features = [
 [dev-dependencies]
 bagua = { path = "..", package = "bagua-dev" }
 anyhow = "1"
+linkme = "0.3.31"
+tokio = { version = "1.41.1", features = ["full"] }
