@@ -1,0 +1,27 @@
+use bagua::{entity::SysId, Entity};
+
+#[derive(PartialEq, Eq, Clone, Default, Copy, Hash, Debug)]
+pub struct FileNodeId(i32);
+
+impl SysId for FileNodeId {
+    fn generate() -> Self {
+        todo!()
+    }
+}
+
+#[Entity]
+#[subset(FileNode1 {filename,})]
+#[model_attr(derive(Debug))]
+pub struct FileNode {
+    id: FileNodeId,
+    #[entity(biz_id)]
+    filename: String,
+    permits: Permits,
+}
+
+#[derive(PartialEq, Eq, Clone, Default, Copy, Hash, Debug)]
+pub struct Permits {
+    read: bool,
+    write: bool,
+    execute: bool,
+}
