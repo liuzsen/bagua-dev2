@@ -9,7 +9,7 @@ struct AA {
 }
 
 #[test]
-fn aa() {
+fn t_has_changed() {
     let a = AA {
         id: 1,
         a: Some(1),

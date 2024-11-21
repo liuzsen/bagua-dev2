@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
 
 mod entity;
+mod get_config;
 mod has_changed;
 mod provider;
 
@@ -55,6 +56,15 @@ pub fn ChildEntity(_args: TokenStream, item: TokenStream) -> TokenStream {
 pub fn derive_has_changed(input: TokenStream) -> TokenStream {
     let entity = syn::parse_macro_input!(input as has_changed::Struct);
     entity
+        .expand()
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+#[proc_macro_derive(GetConfig)]
+pub fn derive_get_config(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as get_config::GetConfig);
+    input
         .expand()
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
