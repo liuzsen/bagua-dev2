@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use bagua::{entity::SysId, Entity, GuardedStruct};
 
 #[derive(PartialEq, Eq, Clone, Default, Copy, Hash, Debug)]
@@ -18,6 +20,8 @@ pub struct FileNode {
     filename: String,
     #[entity(flatten)]
     permits: Permits,
+    #[entity(foreign)]
+    foreign: HashSet<FileNodeId>,
 }
 
 #[GuardedStruct]

@@ -542,7 +542,7 @@ impl EntityField {
                 field.ty = guarded_ty;
             }
             FieldRole::Foreign => {
-                let guarded_ty = parse_quote!(bagua::entity::field::ForeignEntities::<#ty>);
+                let guarded_ty = parse_quote!(bagua::entity::foreign::ForeignEntities::<#ty>);
                 field.ty = guarded_ty;
             }
             FieldRole::Id => {}
