@@ -1,4 +1,4 @@
-use bagua::{entity::SysId, Entity};
+use bagua::{entity::SysId, Entity, GuardedStruct};
 
 #[derive(PartialEq, Eq, Clone, Default, Copy, Hash, Debug)]
 pub struct FileNodeId(i32);
@@ -16,10 +16,13 @@ pub struct FileNode {
     id: FileNodeId,
     #[entity(biz_id)]
     filename: String,
+    #[entity(flatten)]
     permits: Permits,
 }
 
-#[derive(PartialEq, Eq, Clone, Default, Copy, Hash, Debug)]
+#[GuardedStruct]
+#[derive(PartialEq, Eq, Clone, Copy)]
+#[model_attr(derive(Debug))]
 pub struct Permits {
     read: bool,
     write: bool,
