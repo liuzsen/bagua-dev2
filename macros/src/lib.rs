@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
 
 mod entity;
+mod has_changed;
 mod provider;
 
 #[proc_macro_derive(Provider, attributes(provider))]
@@ -48,4 +49,13 @@ pub fn ChildEntity(_args: TokenStream, item: TokenStream) -> TokenStream {
     let stream: TokenStream = output.into();
 
     stream
+}
+
+#[proc_macro_derive(HasChanged)]
+pub fn derive_has_changed(input: TokenStream) -> TokenStream {
+    let entity = syn::parse_macro_input!(input as has_changed::Struct);
+    entity
+        .expand()
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
