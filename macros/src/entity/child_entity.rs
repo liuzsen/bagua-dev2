@@ -9,7 +9,6 @@ use syn::{
     Attribute, Data, Field, Ident, Token,
 };
 
-#[derive(Debug)]
 pub struct Entity {
     name: syn::Ident,
     attrs: Vec<syn::Attribute>,
@@ -20,8 +19,6 @@ pub struct Entity {
     subsets: Vec<Subset>,
 
     all_fields: Vec<EntityField>,
-    id_field_position: usize,
-    biz_id_field_positions: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -40,19 +37,16 @@ struct EntityField {
 enum FieldRole {
     NormalField,
     Foreign,
-    BizId,
-    Id,
-    Flatten,
+    Parent,
 }
 
-#[derive(Debug)]
 struct Subset {
     name: syn::Ident,
     fields: Vec<SubsetField>,
     unused_fields: Vec<Field>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct SubsetField {
     ident: syn::Ident,
     ty: syn::Type,
@@ -64,39 +58,19 @@ type Fields = Punctuated<Field, Token![,]>;
 
 impl Entity {
     pub fn expand(&self) -> syn::Result<TokenStream2> {
-        let entity = self.expand_entity()?;
         let model = self.expand_model()?;
         let updater = self.expand_updater()?;
+        let entity = self.expand_entity()?;
         let subsets = self.expand_subsets()?;
 
         let output = quote::quote_spanned! { self.name.span() =>
-            #entity
             #model
             #updater
+            #entity
             #subsets
         };
 
         Ok(output)
-    }
-
-    fn default_subsets(&self) -> Vec<Subset> {
-        let id_field = self.all_fields.get(self.id_field_position).unwrap();
-        let unused_fields = self
-            .all_fields
-            .iter()
-            .filter(|f| f.role != FieldRole::Id)
-            .map(|f| f.inner.clone())
-            .collect::<Vec<_>>();
-        vec![Subset {
-            name: Ident::new(&format!("{}Mini", self.name), self.name.span()),
-            fields: vec![SubsetField {
-                ident: id_field.field_ident().clone(),
-                ty: id_field.inner.ty.clone(),
-                attrs: id_field.inner.attrs.clone(),
-                is_manual_ty: false,
-            }],
-            unused_fields,
-        }]
     }
 
     fn expand_subsets(&self) -> syn::Result<TokenStream2> {
@@ -148,12 +122,6 @@ impl Entity {
                         }
                     }
                 }
-
-                impl From<#name> for #entity_name {
-                    fn from(subset: #name) -> Self {
-                        ::bagua::entity::subset::Subset::to_entity(subset)
-                    }
-                }
             };
             subsets.push(subset);
         }
@@ -176,33 +144,27 @@ impl Entity {
     }
 
     fn expand_model(&self) -> syn::Result<TokenStream2> {
-        let fields: Punctuated<Field, Token![,]> = self
+        let fields: Punctuated<ModelField, Token![,]> = self
             .all_fields
             .iter()
-            .filter_map(|field| field.to_model_field())
+            .map(|field| field.to_model_field())
             .collect();
         let model_ident = format!("{}Model", self.name);
         let model_ident = syn::Ident::new(&model_ident, self.name.span());
         let attrs = &self.attrs;
         let model_attrs = &self.model_attrs;
 
-        let map_fields = self.all_fields.iter().map(|field| {
-            let ident = field.field_ident();
-            let ty = &field.inner.ty;
-            match field.role {
-                FieldRole::Id => {
-                    quote! {
-                        #ident: <#ty>::generate(),
-                    }
-                }
-                FieldRole::Flatten => {
-                    quote! {
-                        #ident: bagua::entity::field::Reset::reset(self.#ident.build()),
-                    }
-                }
-                _ => {
+        let map_fields = fields.iter().map(|field| {
+            let ident = field.inner.ident.as_ref().unwrap();
+            match field.kind {
+                ModelFieldKind::Normal => {
                     quote! {
                         #ident: bagua::entity::field::Reset::reset(self.#ident),
+                    }
+                }
+                ModelFieldKind::Parent => {
+                    quote! {
+                        #ident: bagua::entity::field::Reset::reset(self.#ident.build_entity()),
                     }
                 }
             }
@@ -240,13 +202,29 @@ impl Entity {
         Ok(output)
     }
 
+    fn impl_guarded_struct(&self) -> TokenStream2 {
+        let entity_name = &self.name;
+        let updater_ident = self.updater_type();
+        let entity_trait = quote! {
+            const _: () = {
+                impl bagua::entity::GuardedStruct for #entity_name {
+                    type Updater = #updater_ident;
+
+                    fn update_fields(&mut self, updater: Self::Updater) {
+                        self.update_fields(updater);
+                    }
+                }
+            };
+        };
+        entity_trait
+    }
+
     fn expand_entity(&self) -> syn::Result<TokenStream2> {
         let fields: Punctuated<Field, Token![,]> = self
             .all_fields
             .iter()
             .map(|field| field.to_guarded_field())
             .collect();
-
         let entity_ident = &self.name;
         let attrs = &self.attrs;
         let entity_attrs = &self.entity_attrs;
@@ -254,7 +232,7 @@ impl Entity {
         let entity_repr = self.entity_repr();
         let read_only_struct = self.read_only_struct(fields.clone(), &entity_repr)?;
         let read_only_ident = &read_only_struct.name;
-        let entity_ident_stream = self.entity_ident_stream();
+
         let impl_deref = self.impl_deref(read_only_ident);
         let impl_entity_trait = self.impl_entity_trait();
         let impl_guarded = self.impl_guarded_struct();
@@ -266,7 +244,6 @@ impl Entity {
             pub struct #entity_ident {
                 #fields
             }
-            #entity_ident_stream
 
             #impl_entity_trait
 
@@ -283,10 +260,6 @@ impl Entity {
             }
         };
         Ok(output)
-    }
-
-    fn updater_type(&self) -> Ident {
-        Ident::new(&format!("{}Updater", self.name), self.name.span())
     }
 
     fn expand_updater(&self) -> syn::Result<TokenStream2> {
@@ -326,6 +299,11 @@ impl Entity {
         Ok(output)
     }
 
+    fn updater_type(&self) -> Ident {
+        let ident = Ident::new(&format!("{}Updater", self.name), self.name.span());
+        ident
+    }
+
     fn entity_repr(&self) -> syn::Attribute {
         let repr = self
             .attrs
@@ -337,11 +315,11 @@ impl Entity {
 
     fn read_only_struct(
         &self,
-        mut guarded_fields: Fields,
+        mut guarded_fileds: Fields,
         repr: &syn::Attribute,
     ) -> syn::Result<ReadOnlyEntity> {
         let name = syn::Ident::new(&format!("{}ReadOnly", self.name), self.name.span());
-        guarded_fields.iter_mut().for_each(|field| {
+        guarded_fileds.iter_mut().for_each(|field| {
             field.vis = pub_vis();
         });
         let mut attrs = self.attrs.clone();
@@ -350,93 +328,25 @@ impl Entity {
         Ok(ReadOnlyEntity {
             name,
             attrs,
-            fields: guarded_fields,
+            fields: guarded_fileds,
         })
     }
 
-    fn entity_ident_name(&self) -> Ident {
-        let entity_ident = &self.name;
-        Ident::new(&format!("{}Ident", entity_ident), entity_ident.span())
-    }
-
-    fn id_field(&self) -> &EntityField {
-        self.all_fields.get(self.id_field_position).unwrap()
-    }
-
-    fn entity_ident_stream(&self) -> TokenStream2 {
-        let id_field = self.all_fields.get(self.id_field_position).unwrap();
-        let id_ty = &id_field.inner.ty;
-        let biz_fields = self
-            .biz_id_field_positions
-            .iter()
-            .map(|&index| self.all_fields.get(index).unwrap())
-            .collect::<Vec<_>>();
-
-        let ident_name = self.entity_ident_name();
-
-        if biz_fields.is_empty() {
-            quote! {
-                pub type #ident_name = #id_ty;
-            }
-        } else {
-            let mut variant_idents = vec![Ident::new("SysId", id_field.field_ident().span())];
-            let mut variant_types = vec![id_ty];
-
-            for field in biz_fields.iter() {
-                let field_ty = &field.inner.ty;
-                let field_ident = field.field_ident();
-                let variant_ident = field_ident.to_string().to_case(Case::Pascal);
-                let field_ident = Ident::new(&variant_ident, field_ident.span());
-                variant_idents.push(field_ident);
-                variant_types.push(field_ty);
-            }
-
-            quote! {
-                #[derive(PartialEq, Eq, Clone, Hash, Debug)]
-                pub enum #ident_name <'a> {
-                    #(#variant_idents (std::borrow::Cow<'a, #variant_types>)),*
-                }
-
-                #(
-                    impl From<#variant_types> for #ident_name <'_> {
-                        fn from(value: #variant_types) -> Self {
-                            Self:: #variant_idents (std::borrow::Cow::Owned(value))
-                        }
-                    }
-                )*
-
-            }
-        }
-    }
-
     fn impl_entity_trait(&self) -> TokenStream2 {
-        let entity_name = &self.name;
-        let entity_ident = self.entity_ident_name();
-        let sys_id_ty = &self.id_field().inner.ty;
+        let entity_ident = &self.name;
+        let parent = self
+            .all_fields
+            .iter()
+            .find(|f| f.role == FieldRole::Parent)
+            .unwrap();
+        let parent_ty = &parent.inner.ty;
         let entity_trait = quote! {
             const _: () = {
                 use bagua::entity::Entity;
-                impl Entity for #entity_name {
-                    type Id<'a> = #entity_ident <'a>;
+                impl Entity for #entity_ident {
+                    type Id<'a> = <#parent_ty as Entity>::Id<'a>;
 
-                    type SysId = #sys_id_ty;
-                }
-            };
-        };
-        entity_trait
-    }
-
-    fn impl_guarded_struct(&self) -> TokenStream2 {
-        let entity_name = &self.name;
-        let updater_ident = self.updater_type();
-        let entity_trait = quote! {
-            const _: () = {
-                impl bagua::entity::GuardedStruct for #entity_name {
-                    type Updater = #updater_ident;
-
-                    fn update_fields(&mut self, updater: Self::Updater) {
-                        self.update_fields(updater);
-                    }
+                    type SysId = <#parent_ty as Entity>::SysId;
                 }
             };
         };
@@ -472,10 +382,9 @@ struct UpdaterField {
 enum UpdaterFieldRole {
     Normal,
     Foreign,
+    Parent,
     ForeignAdd(Ident),
     ForeignRemove(Ident),
-    Flatten,
-    BizId,
 }
 
 pub struct ReadOnlyEntity {
@@ -501,33 +410,49 @@ impl ToTokens for ReadOnlyEntity {
     }
 }
 
+struct ModelField {
+    inner: Field,
+    kind: ModelFieldKind,
+}
+
+enum ModelFieldKind {
+    Normal,
+    Parent,
+}
+
+impl ToTokens for ModelField {
+    fn to_tokens(&self, tokens: &mut TokenStream2) {
+        self.inner.to_tokens(tokens);
+    }
+}
+
 impl EntityField {
     fn field_ident(&self) -> &Ident {
         self.inner.ident.as_ref().unwrap()
     }
 
-    fn to_model_field(&self) -> Option<Field> {
+    fn to_model_field(&self) -> ModelField {
         let mut field = self.inner.clone();
         field.attrs.extend(self.model_attrs.clone());
         let span = self.inner.ident.as_ref().unwrap().span();
         field.vis = syn::Visibility::Public(Token![pub](span));
-
+        let kind;
         match self.role {
-            FieldRole::NormalField => {}
-            FieldRole::Foreign => {}
-            FieldRole::BizId => {}
-            FieldRole::Id => return None,
-            FieldRole::Flatten => match &mut field.ty {
+            FieldRole::Parent => match &mut field.ty {
                 syn::Type::Path(p) => {
                     let last = &mut p.path.segments.last_mut().unwrap().ident;
                     let new_ident = Ident::new(&format!("{}Model", last), last.span());
                     *last = new_ident;
+                    kind = ModelFieldKind::Parent;
                 }
-                _ => panic!("flatten field must be a path"),
+                _ => panic!("parent filed must be a Path"),
             },
+            _ => {
+                kind = ModelFieldKind::Normal;
+            }
         }
 
-        Some(field)
+        ModelField { inner: field, kind }
     }
 
     fn to_guarded_field(&self) -> Field {
@@ -537,17 +462,16 @@ impl EntityField {
 
         let ty = &field.ty;
         match self.role {
-            FieldRole::NormalField | FieldRole::BizId => {
+            FieldRole::NormalField => {
                 let guarded_ty = parse_quote!(bagua::entity::field::Field::<#ty>);
                 field.ty = guarded_ty;
             }
             FieldRole::Foreign => {
-                let guarded_ty = parse_quote!(bagua::entity::field::ForeignEntities::<#ty>);
+                let guarded_ty = parse_quote!(bagua::entity::foreign::ForeignEntities::<#ty>);
                 field.ty = guarded_ty;
             }
-            FieldRole::Id => {}
-            FieldRole::Flatten => {
-                let guarded_ty = parse_quote!(bagua::entity::flatten::FlattenStruct::<#ty>);
+            FieldRole::Parent => {
+                let guarded_ty = parse_quote!(bagua::entity::parent::ParentEntity::<#ty>);
                 field.ty = guarded_ty;
             }
         }
@@ -611,18 +535,7 @@ impl EntityField {
                 });
                 fields
             }
-            FieldRole::BizId => {
-                let field = UpdaterField {
-                    field,
-                    role: UpdaterFieldRole::BizId,
-                    update_with: self.update_with.clone(),
-                };
-                vec![field]
-            }
-            FieldRole::Id => {
-                vec![]
-            }
-            FieldRole::Flatten => {
+            FieldRole::Parent => {
                 let mut field = field;
                 let mut ty = inner.ty.clone();
                 match &mut ty {
@@ -631,13 +544,13 @@ impl EntityField {
                         let new_ident = Ident::new(&format!("{}Updater", last), last.span());
                         *last = new_ident;
                     }
-                    _ => panic!("flatten field must be a path"),
+                    _ => todo!(),
                 }
                 let new_ty = parse_quote!(#ty);
                 field.ty = new_ty;
                 let field = UpdaterField {
                     field,
-                    role: UpdaterFieldRole::Flatten,
+                    role: UpdaterFieldRole::Parent,
                     update_with: self.update_with.clone(),
                 };
                 vec![field]
@@ -649,7 +562,7 @@ impl EntityField {
 impl UpdaterField {
     fn update_statement(&self) -> TokenStream2 {
         match &self.role {
-            UpdaterFieldRole::Normal | UpdaterFieldRole::Foreign | UpdaterFieldRole::BizId => {
+            UpdaterFieldRole::Normal | UpdaterFieldRole::Foreign => {
                 if let Some(update_with) = &self.update_with {
                     quote! {#update_with}
                 } else {
@@ -679,7 +592,7 @@ impl UpdaterField {
                     }
                 }
             }
-            UpdaterFieldRole::Flatten => {
+            UpdaterFieldRole::Parent => {
                 if let Some(update_with) = &self.update_with {
                     quote! {#update_with}
                 } else {
@@ -734,26 +647,9 @@ impl Parse for Entity {
             _ => return Err(syn::Error::new_spanned(input, "expected named fields")),
         };
 
-        let mut id_position = None;
-        let mut biz_id_positions = vec![];
-        for (index, field) in fields.iter().enumerate() {
-            match field.role {
-                FieldRole::BizId => biz_id_positions.push(index),
-                FieldRole::Id => {
-                    if id_position.is_some() {
-                        return Err(syn::Error::new_spanned(
-                            field.inner.ident.as_ref().unwrap(),
-                            "multiple id fields",
-                        ));
-                    }
-                    id_position = Some(index);
-                }
-                _ => {}
-            }
+        if !fields.iter().any(|f| f.role == FieldRole::Parent) {
+            return Err(syn::Error::new_spanned(input, "expected one parent field"));
         }
-        let Some(id_position) = id_position else {
-            return Err(syn::Error::new_spanned(input, "missing id field"));
-        };
 
         let mut subsets = vec![];
         let mut original_attrs = vec![];
@@ -763,7 +659,7 @@ impl Parse for Entity {
         let attrs = input.attrs.clone();
         for attr in attrs {
             if attr.path().is_ident("subset") {
-                parse_subset_attr(&attr, &fields, &mut subsets, &fields[id_position])?;
+                parse_subset_attr(&attr, &fields, &mut subsets)?;
             } else if attr.path().is_ident("model_attr") {
                 let derive = attr.parse_args::<syn::Meta>()?;
                 model_attrs.push(derive);
@@ -778,7 +674,7 @@ impl Parse for Entity {
             }
         }
 
-        let mut this = Self {
+        Ok(Self {
             name: input.ident,
             all_fields: fields,
             attrs: original_attrs,
@@ -786,12 +682,7 @@ impl Parse for Entity {
             model_attrs,
             entity_attrs,
             updater_attrs,
-            id_field_position: id_position,
-            biz_id_field_positions: biz_id_positions,
-        };
-        this.subsets.extend(this.default_subsets());
-
-        Ok(this)
+        })
     }
 }
 
@@ -852,11 +743,7 @@ fn parse_entity_filed(mut field: Field) -> syn::Result<EntityField> {
         }
     }
     let mut can_be_update = true;
-    let mut field_role = if field.ident.as_ref().unwrap() == "id" {
-        FieldRole::Id
-    } else {
-        FieldRole::NormalField
-    };
+    let mut field_role = FieldRole::NormalField;
     let mut update_with = None;
     for attr in filed_attrs {
         match attr {
@@ -867,14 +754,8 @@ fn parse_entity_filed(mut field: Field) -> syn::Result<EntityField> {
                 "no_update" => {
                     can_be_update = false;
                 }
-                "id" => {
-                    field_role = FieldRole::Id;
-                }
-                "biz_id" => {
-                    field_role = FieldRole::BizId;
-                }
-                "flatten" => {
-                    field_role = FieldRole::Flatten;
+                "parent" => {
+                    field_role = FieldRole::Parent;
                 }
                 _ => {
                     return Err(syn::Error::new_spanned(mark, "unknown field mark"));
@@ -902,23 +783,9 @@ fn parse_subset_attr(
     attr: &syn::Attribute,
     fields: &Vec<EntityField>,
     subsets: &mut Vec<Subset>,
-    id_field: &EntityField,
 ) -> syn::Result<()> {
-    let mut subset = attr.parse_args::<SubsetRaw>()?;
+    let subset = attr.parse_args::<SubsetRaw>()?;
 
-    let had_id_field = subset
-        .fields
-        .iter()
-        .any(|f| &f.name == id_field.field_ident());
-    if !had_id_field {
-        subset.fields.insert(
-            0,
-            SubsetFieldRaw {
-                name: id_field.field_ident().clone(),
-                ty: None,
-            },
-        );
-    }
     let mut used_fields = vec![];
     let mut used_indices = vec![];
     for subset_field in subset.fields {
