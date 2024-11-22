@@ -165,7 +165,7 @@ where
 pub mod transaction {
     use crate::{
         db::{
-            transaction::{TransactionMaker, TxHandler},
+            transaction::{TransactionMaker, TxCallback},
             DbDriver,
         },
         provider::{Provider, SingletonProvider},
@@ -194,7 +194,7 @@ pub mod transaction {
     pub struct DieselTxMaker<D> {
         driver: D,
         state: Rc<RefCell<TxStateInner>>,
-        callbacks: Rc<RefCell<Vec<Box<dyn TxHandler>>>>,
+        callbacks: Rc<RefCell<Vec<Box<dyn TxCallback>>>>,
     }
 
     impl<D> DieselTxMaker<D> {
@@ -226,7 +226,7 @@ pub mod transaction {
             let mut cbs = self.callbacks.borrow_mut();
             let cbs = std::mem::take(&mut *cbs);
             for cb in cbs {
-                cb.handle(state);
+                cb.call(state);
             }
         }
     }
@@ -293,11 +293,11 @@ pub mod transaction {
             res
         }
 
-        fn register_handler<H>(&mut self, handler: H)
+        fn register_callback<H>(&mut self, callback: H)
         where
-            H: crate::db::transaction::TxHandler,
+            H: crate::db::transaction::TxCallback,
         {
-            self.callbacks.borrow_mut().push(Box::new(handler));
+            self.callbacks.borrow_mut().push(Box::new(callback));
         }
     }
 

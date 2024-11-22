@@ -10,21 +10,21 @@ pub trait TransactionMaker: 'static {
     where
         F: Future<Output = BizResult<T, E>>;
 
-    fn register_handler<H>(&mut self, handler: H)
+    fn register_callback<H>(&mut self, callback: H)
     where
-        H: TxHandler;
+        H: TxCallback;
 }
 
 pub trait LocalAsyncTask: Send + Sync + 'static {
-    fn call(&mut self) -> LocalBoxFuture<()>;
+    fn run(&mut self) -> LocalBoxFuture<()>;
 }
 
 pub trait LocalTaskRunner: 'static {
     fn spawn<T: LocalAsyncTask>(&mut self, task: T);
 }
 
-pub trait TxHandler: 'static {
-    fn handle(self: Box<Self>, tx_result: TxResult);
+pub trait TxCallback: 'static {
+    fn call(self: Box<Self>, tx_result: TxResult);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -33,13 +33,13 @@ pub enum TxResult {
     RolledBack,
 }
 
-pub struct BasicTxHandler<Tx, Task, Runner> {
+pub struct BasicTxCallback<Tx, Task, Runner> {
     task_runner: Runner,
     tasks: Rc<RefCell<Option<Vec<Task>>>>,
     phantom: std::marker::PhantomData<Tx>,
 }
 
-impl<Tx, Task, Runner> Provider for BasicTxHandler<Tx, Task, Runner>
+impl<Tx, Task, Runner> Provider for BasicTxCallback<Tx, Task, Runner>
 where
     Runner: Provider + Clone + LocalTaskRunner,
     Tx: TransactionMaker + Provider,
@@ -52,13 +52,13 @@ where
             tasks: Rc::new(RefCell::new(None)),
             phantom: std::marker::PhantomData,
         };
-        tx.register_handler(this.clone());
+        tx.register_callback(this.clone());
 
         Ok(this)
     }
 }
 
-impl<Tx, T, Runner> BasicTxHandler<Tx, T, Runner> {
+impl<Tx, T, Runner> BasicTxCallback<Tx, T, Runner> {
     pub fn push_task(&mut self, task: T) {
         let mut tasks = self.tasks.borrow_mut();
         let tasks = tasks.get_or_insert_with(Default::default);
@@ -66,7 +66,7 @@ impl<Tx, T, Runner> BasicTxHandler<Tx, T, Runner> {
     }
 }
 
-impl<Tx, T, Runner> Clone for BasicTxHandler<Tx, T, Runner>
+impl<Tx, T, Runner> Clone for BasicTxCallback<Tx, T, Runner>
 where
     Runner: Clone,
 {
@@ -79,13 +79,13 @@ where
     }
 }
 
-impl<Tx, Task, Runner> TxHandler for BasicTxHandler<Tx, Task, Runner>
+impl<Tx, Task, Runner> TxCallback for BasicTxCallback<Tx, Task, Runner>
 where
     Runner: LocalTaskRunner,
     Task: LocalAsyncTask,
     Tx: 'static,
 {
-    fn handle(mut self: Box<Self>, tx_result: TxResult) {
+    fn call(mut self: Box<Self>, tx_result: TxResult) {
         match tx_result {
             TxResult::Committed => {
                 let mut tasks = self.tasks.borrow_mut();
@@ -154,7 +154,7 @@ pub mod task_runner {
                 local.spawn_local(async move {
                     while let Some(mut task) = self.receiver.recv().await {
                         tokio::task::spawn_local(async move {
-                            task.call().await;
+                            task.run().await;
                         });
                     }
                 });
@@ -226,7 +226,7 @@ mod tests {
 
         use crate::provider::Provider;
 
-        use super::{LocalAsyncTask, LocalTaskRunner, TransactionMaker, TxHandler, TxResult};
+        use super::{LocalAsyncTask, LocalTaskRunner, TransactionMaker, TxCallback, TxResult};
 
         #[derive(Clone)]
         pub struct MockTaskRunner {}
@@ -245,7 +245,7 @@ mod tests {
                     let local = LocalSet::new();
 
                     local.spawn_local(async move {
-                        task.call().await;
+                        task.run().await;
                     });
 
                     rt.block_on(local);
@@ -257,7 +257,7 @@ mod tests {
 
         #[derive(Clone)]
         pub struct MockTxMaker {
-            handlers: Rc<RefCell<Vec<Box<dyn TxHandler>>>>,
+            callbacks: Rc<RefCell<Vec<Box<dyn TxCallback>>>>,
         }
 
         impl Provider for MockTxMaker {
@@ -268,7 +268,7 @@ mod tests {
                     Ok(this.clone())
                 } else {
                     let this = Self {
-                        handlers: Default::default(),
+                        callbacks: Default::default(),
                     };
                     ctx.insert(this.clone());
                     Ok(this)
@@ -283,46 +283,46 @@ mod tests {
             {
                 match tx.await {
                     Ok(Ok(out)) => {
-                        for handler in self.handlers.borrow_mut().drain(..) {
-                            handler.handle(TxResult::Committed);
+                        for callback in self.callbacks.borrow_mut().drain(..) {
+                            callback.call(TxResult::Committed);
                         }
                         Ok(Ok(out))
                     }
                     Ok(Err(e)) => {
-                        for handler in self.handlers.borrow_mut().drain(..) {
-                            handler.handle(TxResult::RolledBack);
+                        for callback in self.callbacks.borrow_mut().drain(..) {
+                            callback.call(TxResult::RolledBack);
                         }
                         Ok(Err(e))
                     }
                     Err(err) => {
-                        for handler in self.handlers.borrow_mut().drain(..) {
-                            handler.handle(TxResult::RolledBack);
+                        for callback in self.callbacks.borrow_mut().drain(..) {
+                            callback.call(TxResult::RolledBack);
                         }
                         Err(err)
                     }
                 }
             }
 
-            fn register_handler<H>(&mut self, handler: H)
+            fn register_callback<H>(&mut self, callback: H)
             where
-                H: super::TxHandler,
+                H: super::TxCallback,
             {
-                self.handlers.borrow_mut().push(Box::new(handler));
+                self.callbacks.borrow_mut().push(Box::new(callback));
             }
         }
     }
 
     pub struct TxMqImplByDeveloper<Tx, Runner> {
-        handler: BasicTxHandler<Tx, MqTask, Runner>,
+        callback: BasicTxCallback<Tx, MqTask, Runner>,
     }
 
     impl<Tx, Runner> Provider for TxMqImplByDeveloper<Tx, Runner>
     where
-        BasicTxHandler<Tx, MqTask, Runner>: Provider,
+        BasicTxCallback<Tx, MqTask, Runner>: Provider,
     {
         fn build(ctx: &mut crate::provider::ProviderContext) -> anyhow::Result<Self> {
             Ok(Self {
-                handler: BasicTxHandler::build(ctx)?,
+                callback: BasicTxCallback::build(ctx)?,
             })
         }
     }
@@ -332,7 +332,7 @@ mod tests {
             // 1. save to db
             println!("[Mq Adapter] save to db. wait for commit");
             // 2. create a task which will be executed after commit
-            self.handler.push_task(MqTask { message });
+            self.callback.push_task(MqTask { message });
 
             Ok(())
         }
@@ -343,7 +343,7 @@ mod tests {
     }
 
     impl LocalAsyncTask for MqTask {
-        fn call(&mut self) -> LocalBoxFuture<()> {
+        fn run(&mut self) -> LocalBoxFuture<()> {
             println!("[Mq Adapter] tx committed. run task");
             async {
                 self.run().await.unwrap();
