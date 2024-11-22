@@ -7,15 +7,13 @@ use diesel_async::{
 
 use std::{cell::UnsafeCell, rc::Rc};
 
+use crate::provider::Provider;
 use crate::provider::SingletonProvider;
-use crate::{db::DbDriver, provider::Provider};
 
 use super::DbPool;
 
 pub trait SqlRunner {
     type Connection: AsyncConnection + Send;
-
-    async fn get_connection(&mut self) -> anyhow::Result<&mut Self::Connection>;
 
     async fn sql_execute<Sql>(&mut self, sql: Sql) -> anyhow::Result<usize>
     where
@@ -30,12 +28,6 @@ pub trait SqlRunner {
     where
         U: Send,
         Sql: LoadQuery<'query, Self::Connection, U> + 'query;
-
-    async fn sql_first<'query, U, Sql>(&mut self, sql: Sql) -> anyhow::Result<Option<U>>
-    where
-        U: Send,
-        Sql: diesel::query_dsl::methods::LimitDsl,
-        diesel::dsl::Limit<Sql>: LoadQuery<'query, Self::Connection, U> + 'query + Send;
 
     async fn sql_exists<'query, Sql>(&mut self, sql: Sql) -> anyhow::Result<bool>
     where
@@ -97,17 +89,6 @@ where
     }
 }
 
-impl<P> DbDriver for DieselDriver<P>
-where
-    P: DbPool,
-{
-    type Connection = P::Connection;
-
-    async fn connect(&mut self) -> anyhow::Result<&mut Self::Connection> {
-        self.fetch_or_reuse_conn().await
-    }
-}
-
 impl<P> Provider for DieselDriver<P>
 where
     P: Provider + 'static + Clone,
@@ -138,15 +119,11 @@ where
 {
     type Connection = P::Connection;
 
-    async fn get_connection(&mut self) -> anyhow::Result<&mut Self::Connection> {
-        self.fetch_or_reuse_conn().await
-    }
-
     async fn sql_execute<Sql>(&mut self, sql: Sql) -> anyhow::Result<usize>
     where
         Sql: diesel_async::methods::ExecuteDsl<Self::Connection>,
     {
-        let conn = self.get_connection().await?;
+        let conn = self.fetch_or_reuse_conn().await?;
         Ok(sql.execute(conn).await?)
     }
 
@@ -156,7 +133,7 @@ where
         Sql: diesel_async::methods::LoadQuery<'query, Self::Connection, U> + 'query,
     {
         use diesel::result::OptionalExtension;
-        let conn = self.get_connection().await?;
+        let conn = self.fetch_or_reuse_conn().await?;
         Ok(sql.get_result(conn).await.optional()?)
     }
 
@@ -165,20 +142,8 @@ where
         U: Send,
         Sql: diesel_async::methods::LoadQuery<'query, Self::Connection, U> + 'query,
     {
-        let conn = self.get_connection().await?;
+        let conn = self.fetch_or_reuse_conn().await?;
         Ok(sql.get_results(conn).await?)
-    }
-
-    async fn sql_first<'query, U, Sql>(&mut self, sql: Sql) -> anyhow::Result<Option<U>>
-    where
-        U: Send,
-        Sql: diesel::query_dsl::methods::LimitDsl,
-        diesel::dsl::Limit<Sql>:
-            diesel_async::methods::LoadQuery<'query, Self::Connection, U> + 'query + Send,
-    {
-        use diesel::result::OptionalExtension;
-        let conn = self.get_connection().await?;
-        Ok(sql.first(conn).await.optional()?)
     }
 
     async fn sql_exists<'query, Sql>(&mut self, sql: Sql) -> anyhow::Result<bool>
@@ -189,7 +154,7 @@ where
         diesel::dsl::select<diesel::expression::exists::Exists<Sql>>:
             diesel::query_builder::AsQuery,
     {
-        let conn = self.get_connection().await?;
+        let conn = self.fetch_or_reuse_conn().await?;
         let exists = diesel::select(diesel::dsl::exists(sql))
             .get_result(conn)
             .await?;
@@ -279,7 +244,7 @@ pub mod transaction {
             use diesel_async::pooled_connection::PoolTransactionManager;
             let conn = self
                 .driver
-                .connect()
+                .get_connection()
                 .await
                 .context("get connection for transaction")?;
             PoolTransactionManager::begin_transaction(conn)
