@@ -1,9 +1,12 @@
 use std::{cell::RefCell, future::Future, rc::Rc};
 
-use futures::future::LocalBoxFuture;
 use tracing::debug;
 
-use crate::{provider::Provider, result::BizResult};
+use crate::{
+    async_task::{LocalAsyncTask, LocalTaskRunner},
+    provider::Provider,
+    result::BizResult,
+};
 
 pub trait TransactionMaker: 'static {
     async fn do_transaction<F, T, E>(&mut self, tx: F) -> BizResult<T, E>
@@ -13,14 +16,6 @@ pub trait TransactionMaker: 'static {
     fn register_callback<H>(&mut self, callback: H)
     where
         H: TxCallback;
-}
-
-pub trait LocalAsyncTask: Send + Sync + 'static {
-    fn run(&mut self) -> LocalBoxFuture<()>;
-}
-
-pub trait LocalTaskRunner: 'static {
-    fn spawn<T: LocalAsyncTask>(&mut self, task: T);
 }
 
 pub trait TxCallback: 'static {
@@ -33,22 +28,22 @@ pub enum TxResult {
     RolledBack,
 }
 
-pub struct BasicTxCallback<Tx, Task, Runner> {
-    task_runner: Runner,
+pub struct AsyncTxCallbacks<Tx, Task, Runner> {
+    task_runner: Rc<Runner>,
     tasks: Rc<RefCell<Option<Vec<Task>>>>,
     phantom: std::marker::PhantomData<Tx>,
 }
 
-impl<Tx, Task, Runner> Provider for BasicTxCallback<Tx, Task, Runner>
+impl<Tx, Task, Runner> Provider for AsyncTxCallbacks<Tx, Task, Runner>
 where
-    Runner: Provider + Clone + LocalTaskRunner,
+    Runner: Provider + LocalTaskRunner,
     Tx: TransactionMaker + Provider,
     Task: LocalAsyncTask,
 {
     fn build(ctx: &mut crate::provider::ProviderContext) -> anyhow::Result<Self> {
         let mut tx = Tx::build(ctx)?;
         let this = Self {
-            task_runner: Runner::build(ctx)?,
+            task_runner: Rc::new(Runner::build(ctx)?),
             tasks: Rc::new(RefCell::new(None)),
             phantom: std::marker::PhantomData,
         };
@@ -58,7 +53,7 @@ where
     }
 }
 
-impl<Tx, T, Runner> BasicTxCallback<Tx, T, Runner> {
+impl<Tx, T, Runner> AsyncTxCallbacks<Tx, T, Runner> {
     pub fn push_task(&mut self, task: T) {
         let mut tasks = self.tasks.borrow_mut();
         let tasks = tasks.get_or_insert_with(Default::default);
@@ -66,10 +61,7 @@ impl<Tx, T, Runner> BasicTxCallback<Tx, T, Runner> {
     }
 }
 
-impl<Tx, T, Runner> Clone for BasicTxCallback<Tx, T, Runner>
-where
-    Runner: Clone,
-{
+impl<Tx, T, Runner> Clone for AsyncTxCallbacks<Tx, T, Runner> {
     fn clone(&self) -> Self {
         Self {
             tasks: self.tasks.clone(),
@@ -79,13 +71,13 @@ where
     }
 }
 
-impl<Tx, Task, Runner> TxCallback for BasicTxCallback<Tx, Task, Runner>
+impl<Tx, Task, Runner> TxCallback for AsyncTxCallbacks<Tx, Task, Runner>
 where
     Runner: LocalTaskRunner,
     Task: LocalAsyncTask,
     Tx: 'static,
 {
-    fn call(mut self: Box<Self>, tx_result: TxResult) {
+    fn call(self: Box<Self>, tx_result: TxResult) {
         match tx_result {
             TxResult::Committed => {
                 let mut tasks = self.tasks.borrow_mut();
@@ -96,80 +88,18 @@ where
                 }
             }
             TxResult::RolledBack => {
-                debug!("tx rollback");
+                debug!("tx rolled back. skip all tasks");
             }
         }
     }
 }
 
 #[cfg(feature = "tokio")]
-pub mod task_runner {
-    use std::sync::OnceLock;
-
-    use crate::provider::Provider;
-
-    use super::LocalAsyncTask;
-
-    pub struct TokioTaskExecutor {
-        receiver: tokio::sync::mpsc::UnboundedReceiver<Box<dyn LocalAsyncTask>>,
-    }
-
-    #[derive(Clone)]
-    pub struct TokioLocalTaskRunner {
-        sender: tokio::sync::mpsc::UnboundedSender<Box<dyn LocalAsyncTask>>,
-    }
-
-    static TASK_HANDLE: OnceLock<TokioLocalTaskRunner> = OnceLock::new();
-
-    impl Provider for TokioLocalTaskRunner {
-        fn build(_ctx: &mut crate::provider::ProviderContext) -> anyhow::Result<Self> {
-            let this = TASK_HANDLE.get_or_init(|| {
-                let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-                TokioTaskExecutor { receiver }.start();
-                TokioLocalTaskRunner { sender }
-            });
-            Ok(this.clone())
-        }
-    }
-
-    impl TokioLocalTaskRunner {
-        pub fn spawn(&self, task: Box<dyn LocalAsyncTask>) {
-            if let Err(_err) = self.sender.send(task) {
-                tracing::error!("failed to spawn task");
-                panic!("Failed to spawn task. Is the `TokioTaskExecutor` running?");
-            }
-        }
-    }
-
-    impl TokioTaskExecutor {
-        pub fn start(mut self) {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap(); // TODO: handle error
-
-            std::thread::spawn(move || {
-                let local = tokio::task::LocalSet::new();
-
-                local.spawn_local(async move {
-                    while let Some(mut task) = self.receiver.recv().await {
-                        tokio::task::spawn_local(async move {
-                            task.run().await;
-                        });
-                    }
-                });
-
-                rt.block_on(local);
-            });
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use application::TxMq;
-    use futures::FutureExt;
     use mocks::{MockTaskRunner, MockTxMaker};
+    use tokio::sync::oneshot;
 
     use crate::{provider::Provider, usecase::UseCase};
 
@@ -183,7 +113,7 @@ mod tests {
         }
 
         pub struct TestUserCase<TxMq> {
-            tx_mq: TxMq,
+            pub tx_mq: TxMq,
         }
 
         impl<Mq> UseCase for TestUserCase<Mq>
@@ -222,36 +152,25 @@ mod tests {
     mod mocks {
         use std::{cell::RefCell, rc::Rc};
 
-        use tokio::{runtime::Builder, task::LocalSet};
-
-        use crate::provider::Provider;
+        use crate::{async_task::tokio_impl::TokioLocalTaskRunner, provider::Provider};
 
         use super::{LocalAsyncTask, LocalTaskRunner, TransactionMaker, TxCallback, TxResult};
 
-        #[derive(Clone)]
-        pub struct MockTaskRunner {}
-
-        impl Provider for MockTaskRunner {
-            fn build(_ctx: &mut crate::provider::ProviderContext) -> anyhow::Result<Self> {
-                Ok(MockTaskRunner {})
-            }
+        pub struct MockTaskRunner {
+            inner: TokioLocalTaskRunner,
         }
 
         impl LocalTaskRunner for MockTaskRunner {
-            fn spawn<T: LocalAsyncTask>(&mut self, mut task: T) {
-                let rt = Builder::new_current_thread().enable_all().build().unwrap();
+            fn spawn<T: LocalAsyncTask>(&self, task: T) {
+                self.inner.spawn(task);
+            }
+        }
 
-                std::thread::spawn(move || {
-                    let local = LocalSet::new();
-
-                    local.spawn_local(async move {
-                        task.run().await;
-                    });
-
-                    rt.block_on(local);
+        impl Provider for MockTaskRunner {
+            fn build(_ctx: &mut crate::provider::ProviderContext) -> anyhow::Result<Self> {
+                Ok(Self {
+                    inner: TokioLocalTaskRunner::get_or_init()?,
                 })
-                .join()
-                .unwrap();
             }
         }
 
@@ -313,16 +232,21 @@ mod tests {
     }
 
     pub struct TxMqImplByDeveloper<Tx, Runner> {
-        callback: BasicTxCallback<Tx, MqTask, Runner>,
+        callback: AsyncTxCallbacks<Tx, MqTask, Runner>,
+        result: oneshot::Receiver<()>,
+        sender: Option<oneshot::Sender<()>>,
     }
 
     impl<Tx, Runner> Provider for TxMqImplByDeveloper<Tx, Runner>
     where
-        BasicTxCallback<Tx, MqTask, Runner>: Provider,
+        AsyncTxCallbacks<Tx, MqTask, Runner>: Provider,
     {
         fn build(ctx: &mut crate::provider::ProviderContext) -> anyhow::Result<Self> {
+            let (tx, rx) = oneshot::channel();
             Ok(Self {
-                callback: BasicTxCallback::build(ctx)?,
+                callback: AsyncTxCallbacks::build(ctx)?,
+                result: rx,
+                sender: Some(tx),
             })
         }
     }
@@ -332,7 +256,10 @@ mod tests {
             // 1. save to db
             println!("[Mq Adapter] save to db. wait for commit");
             // 2. create a task which will be executed after commit
-            self.callback.push_task(MqTask { message });
+            self.callback.push_task(MqTask {
+                message,
+                result_sender: self.sender.take(),
+            });
 
             Ok(())
         }
@@ -340,15 +267,14 @@ mod tests {
 
     pub struct MqTask {
         message: String,
+        result_sender: Option<oneshot::Sender<()>>,
     }
 
     impl LocalAsyncTask for MqTask {
-        fn run(&mut self) -> LocalBoxFuture<()> {
+        async fn run(&mut self) {
             println!("[Mq Adapter] tx committed. run task");
-            async {
-                self.run().await.unwrap();
-            }
-            .boxed_local()
+            self.run().await.unwrap();
+            self.result_sender.take().unwrap().send(()).unwrap();
         }
     }
 
@@ -400,6 +326,7 @@ mod tests {
 
         let mut uc = TxUc::provide()?;
         uc.execute("hello".to_string()).await?;
+        uc.uc.tx_mq.result.await?;
 
         Ok(())
     }
