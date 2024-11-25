@@ -10,6 +10,13 @@ pub mod provider;
 pub mod repository;
 pub mod result;
 pub mod usecase;
+pub mod utils;
 
 pub use futures;
 pub use macros::*;
+
+#[cfg(feature = "flake-id")]
+pub use derive_more;
+// pub extern crate derive_more;
+#[cfg(feature = "flake-id")]
+pub extern crate flaken;

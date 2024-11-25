@@ -38,6 +38,16 @@ version = "1"
 features = ["full"]
 optional = true
 
+[dependencies.flaken]
+version = "0.2"
+optional = true
+
+[dependencies.derive_more]
+version = "1"
+default-features = false
+optional = true
+features = ["from", "display", "from_str"]
+
 [dev-dependencies]
 indexmap = { version = "2.6.0", features = ["serde"] }
 serde_json = "1"
@@ -48,3 +58,6 @@ default = ["diesel", "tokio", "actix-web"]
 diesel = ["dep:diesel", "dep:diesel-async"]
 tokio = ["dep:tokio"]
 actix-web = ["dep:actix-web"]
+flake-id = ["flaken", "derive_more"]
+flaken = ["dep:flaken"]
+derive_more = ["dep:derive_more"]
