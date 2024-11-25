@@ -4,6 +4,7 @@ pub mod async_task;
 pub mod configs;
 pub mod db;
 pub mod entity;
+pub mod http;
 pub mod json;
 pub mod provider;
 pub mod repository;
