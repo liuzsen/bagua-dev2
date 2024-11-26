@@ -15,12 +15,6 @@ pub trait Repository<E: Entity> {
 
     async fn update(&mut self, entity: &E) -> anyhow::Result<UpdateEffect>;
 
-    async fn direct_update(
-        &mut self,
-        id: E::SysId,
-        updater: E::Updater,
-    ) -> anyhow::Result<UpdateEffect>;
-
     async fn delete<I>(&mut self, id: I) -> anyhow::Result<DeleteEffect>
     where
         for<'a> E::Id<'a>: From<I>;
