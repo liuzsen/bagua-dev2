@@ -1,3 +1,4 @@
+#[cfg(feature = "diesel")]
 pub mod diesel;
 pub mod transaction;
 
