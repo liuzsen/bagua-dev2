@@ -1,4 +1,4 @@
-use std::{borrow::Cow, ops::Deref};
+use std::ops::Deref;
 
 #[derive(Clone, PartialEq, Eq, Copy)]
 pub enum Field<T> {
@@ -53,6 +53,14 @@ impl<T> Field<T> {
         }
     }
 
+    pub fn changed_ref(&self) -> Option<&T> {
+        match self {
+            Field::Unloaded => None,
+            Field::Unchanged(_) => None,
+            Field::Set(v) => Some(v),
+        }
+    }
+
     pub fn value_opt(self) -> Option<T> {
         match self {
             Field::Unloaded => None,
@@ -94,70 +102,194 @@ impl<T> Field<T> {
     }
 }
 
-pub trait FilledValue<'a, T, M> {
-    fn value_ref(&'a self) -> T;
-}
+pub use field_value::*;
+mod field_value {
+    use std::borrow::Cow;
 
-pub trait ConvertTo<T> {
-    fn convert_to(&self) -> T;
-}
+    use super::Field;
+    use std::marker::PhantomData;
 
-pub struct MarkConvertTo;
+    #[test]
+    #[ignore]
+    fn check_convert() {
+        #[allow(unused)]
+        fn int(f: &Field<u32>) {
+            let _: u32 = f.filled();
+            let _: i32 = f.filled();
+        }
 
-impl<'a, T, O> FilledValue<'a, &'a O, MarkConvertTo> for Field<T>
-where
-    T: ConvertTo<&'a O>,
-{
-    fn value_ref(&'a self) -> &'a O {
-        let value = self.value_ref();
-        value.convert_to()
+        #[allow(unused)]
+        fn str(f: &Field<String>) {
+            let _: &str = f.filled();
+            let _: &String = f.filled();
+            let _: Cow<str> = f.filled();
+        }
     }
-}
 
-pub struct MarkRef;
+    pub trait FiledValue<'a, T, M> {
+        fn filled(&'a self) -> T;
 
-impl<'a, T, O> FilledValue<'a, &'a O, MarkRef> for Field<T>
-where
-    T: Deref<Target = O>,
-{
-    fn value_ref(&'a self) -> &'a O {
-        self.value_ref()
+        fn changed(&'a self) -> Option<T>;
     }
-}
 
-pub struct MarkCow;
-
-impl<'a, T> FilledValue<'a, Cow<'a, T>, MarkCow> for Field<T>
-where
-    T: ToOwned,
-{
-    fn value_ref(&'a self) -> Cow<'a, T> {
-        let value = self.value_ref();
-        Cow::Borrowed(value)
+    pub trait ConvertTo<'a, T> {
+        fn convert_to(&'a self) -> T;
     }
-}
 
-pub struct MarkCopy;
-
-impl<'a, T> FilledValue<'a, T, MarkCopy> for Field<T>
-where
-    T: Copy,
-{
-    fn value_ref(&'a self) -> T {
-        *self.value_ref()
+    macro_rules! convert_int {
+        ($source:ty => $target:ident) => {
+            impl<'a> ConvertTo<'a, $target> for $source {
+                fn convert_to(&'a self) -> $target {
+                    match $target::try_from(*self) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            panic!(
+                                "Field value overflow. Type = {}, value = {self}",
+                                std::any::type_name::<Self>()
+                            )
+                        }
+                    }
+                }
+            }
+        };
     }
-}
+    convert_int!(u64 => i64);
+    convert_int!(u32 => i32);
+    convert_int!(u16 => i16);
+    convert_int!(u8 => i8);
 
-pub struct MarkAsRef;
+    pub struct ComposeMark<A, B>(PhantomData<(A, B)>);
 
-impl<'a, T, Ref> FilledValue<'a, &'a Ref, MarkAsRef> for Field<T>
-where
-    T: AsRef<Ref>,
-    Ref: ?Sized,
-{
-    fn value_ref(&'a self) -> &'a Ref {
-        let value = self.value_ref();
-        value.as_ref()
+    pub struct MarkBorrow;
+    pub struct MarkAsRef;
+    pub struct MarkCopy;
+    pub struct MarkConvertToRef;
+    pub struct MarkConvertToValue;
+    pub struct MarkCow;
+
+    impl<'a, T> FiledValue<'a, &'a T, MarkBorrow> for Field<T> {
+        fn filled(&'a self) -> &'a T {
+            self.value_ref()
+        }
+
+        fn changed(&'a self) -> Option<&'a T> {
+            self.changed_ref()
+        }
+    }
+
+    pub struct MarkSelf;
+
+    impl<'a, T> FiledValue<'a, &'a T, MarkSelf> for T {
+        fn filled(&'a self) -> &'a T {
+            self
+        }
+
+        fn changed(&'a self) -> Option<&'a T> {
+            Some(self)
+        }
+    }
+
+    impl<'a, T, Ref> FiledValue<'a, &'a Ref, MarkAsRef> for Field<T>
+    where
+        T: AsRef<Ref>,
+        Ref: ?Sized,
+    {
+        fn filled(&'a self) -> &'a Ref {
+            let value = self.value_ref();
+            value.as_ref()
+        }
+
+        fn changed(&'a self) -> Option<&'a Ref> {
+            let value = self.changed_ref();
+            value.map(|v| v.as_ref())
+        }
+    }
+
+    impl<'a, T> FiledValue<'a, T, MarkCopy> for Field<T>
+    where
+        T: Copy,
+    {
+        fn filled(&'a self) -> T {
+            *self.value_ref()
+        }
+
+        fn changed(&'a self) -> Option<T> {
+            self.value_opt()
+        }
+    }
+
+    impl<'a, T, To> FiledValue<'a, &'a To, MarkConvertToRef> for Field<T>
+    where
+        T: ConvertTo<'a, &'a To>,
+    {
+        fn filled(&'a self) -> &'a To {
+            let value = self.value_ref();
+            value.convert_to()
+        }
+
+        fn changed(&'a self) -> Option<&'a To> {
+            let value = self.changed_ref();
+            value.map(|v| v.convert_to())
+        }
+    }
+
+    impl<'a, T, To> FiledValue<'a, To, MarkConvertToValue> for Field<T>
+    where
+        T: ConvertTo<'a, To>,
+    {
+        fn filled(&'a self) -> To {
+            self.value_ref().convert_to()
+        }
+
+        fn changed(&'a self) -> Option<To> {
+            self.changed_ref().map(|v| v.convert_to())
+        }
+    }
+
+    impl<'a, T, Ref> FiledValue<'a, Cow<'a, Ref>, ComposeMark<MarkAsRef, MarkCow>> for Field<T>
+    where
+        Ref: ToOwned + ?Sized,
+        T: AsRef<Ref>,
+    {
+        fn filled(&'a self) -> Cow<'a, Ref> {
+            let value = self.value_ref();
+            Cow::Borrowed(value.as_ref())
+        }
+
+        fn changed(&'a self) -> Option<Cow<'a, Ref>> {
+            let value = self.changed_ref();
+            value.map(|v| Cow::Borrowed(v.as_ref()))
+        }
+    }
+
+    impl<'a, T> FiledValue<'a, Cow<'a, T>, ComposeMark<MarkBorrow, MarkCow>> for Field<T>
+    where
+        T: ToOwned,
+    {
+        fn filled(&'a self) -> Cow<'a, T> {
+            let value = self.value_ref();
+            Cow::Borrowed(value)
+        }
+
+        fn changed(&'a self) -> Option<Cow<'a, T>> {
+            self.changed_ref().map(Cow::Borrowed)
+        }
+    }
+
+    impl<'a, T, To> FiledValue<'a, Cow<'a, To>, ComposeMark<MarkConvertToRef, MarkCow>> for Field<T>
+    where
+        T: ConvertTo<'a, &'a To>,
+        To: ToOwned + ?Sized,
+    {
+        fn filled(&'a self) -> Cow<'a, To> {
+            let value = self.value_ref();
+            Cow::Borrowed(value.convert_to())
+        }
+
+        fn changed(&'a self) -> Option<Cow<'a, To>> {
+            let value = self.changed_ref();
+            value.map(|v| Cow::Borrowed(v.convert_to()))
+        }
     }
 }
 
