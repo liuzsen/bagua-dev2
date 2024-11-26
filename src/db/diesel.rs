@@ -335,6 +335,103 @@ pub mod transaction {
     impl<D> SingletonProvider for DieselTxMaker<D> where Self: Provider + Clone {}
 }
 
+pub mod pg_pool {
+    //! Postgres connection pool
+
+    use std::sync::OnceLock;
+    use std::time::Duration;
+
+    use anyhow::Result;
+    use diesel_async::pooled_connection::deadpool::{Object, Pool};
+    use diesel_async::pooled_connection::AsyncDieselConnectionManager;
+    use diesel_async::AsyncPgConnection;
+    use serde::{Deserialize, Serialize};
+
+    /// pg pool connection
+    pub type PgConn = Object<AsyncPgConnection>;
+    pub type PgPool = Pool<AsyncPgConnection>;
+
+    static POOL: OnceLock<PgPool> = OnceLock::new();
+
+    /// Postgres connection pool config
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    pub struct PgPoolConfig {
+        pub min_conn: u32,
+        pub max_conn: u32,
+        pub url: String,
+    }
+
+    impl Default for PgPoolConfig {
+        fn default() -> Self {
+            Self {
+                min_conn: 1,
+                max_conn: 10,
+                url: "postgresql://postgres:postgres@127.0.0.1:5432/postgres".to_string(),
+            }
+        }
+    }
+
+    /// Initialize a global postgres connection pool
+    pub async fn init(config: &PgPoolConfig) -> Result<()> {
+        init_pool(&POOL, config).await
+    }
+
+    /// Get a postgres connection
+    ///
+    /// # Panics
+    ///
+    /// Panics if the global postgres connection pool has not been initialized
+    pub async fn pg_conn() -> Result<PgConn> {
+        let conn = POOL.get().unwrap().get().await?;
+        Ok(conn)
+    }
+
+    /// Initialize a custom postgres connection pool
+    pub async fn init_pool(
+        pool_slot: &'static OnceLock<PgPool>,
+        config: &PgPoolConfig,
+    ) -> Result<()> {
+        if pool_slot.get().is_some() {
+            return Ok(());
+        }
+
+        let url_cfg =
+            AsyncDieselConnectionManager::<diesel_async::AsyncPgConnection>::new(&config.url);
+        let new_pool = Pool::builder(url_cfg)
+            .max_size(config.max_conn as usize)
+            .build()?;
+        let _conn = new_pool.get().await?;
+
+        pool_slot.get_or_init(|| {
+            tokio::spawn(async move {
+                // Check every 30 seconds. Delete connections older than 1 minute
+                let interval = Duration::from_secs(30);
+                let max_age = Duration::from_secs(60);
+                loop {
+                    tokio::time::sleep(interval).await;
+
+                    unsafe {
+                        // SAFETY: the pool is initialized
+                        pool_slot
+                            .get()
+                            .unwrap_unchecked()
+                            .retain(|_, metrics| metrics.last_used() < max_age);
+                    }
+                }
+            });
+
+            new_pool
+        });
+
+        Ok(())
+    }
+
+    /// Get the global postgres connection pool
+    pub fn get_pool() -> &'static PgPool {
+        POOL.get().unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(dead_code)]
