@@ -95,3 +95,37 @@ impl DeleteEffect {
 
     pub fn ignore_effect(self) {}
 }
+
+pub trait FromZeroOrOneEffect {
+    fn from_zero_or_one(effect: usize) -> Self;
+}
+
+impl FromZeroOrOneEffect for SaveEffect {
+    fn from_zero_or_one(effect: usize) -> Self {
+        match effect {
+            0 => SaveEffect::Ok,
+            1 => SaveEffect::Conflict,
+            _ => panic!("unexpected effect when saving: {}", effect),
+        }
+    }
+}
+
+impl FromZeroOrOneEffect for DeleteEffect {
+    fn from_zero_or_one(effect: usize) -> Self {
+        match effect {
+            0 => DeleteEffect::Ok,
+            1 => DeleteEffect::NotFound,
+            _ => panic!("unexpected effect when deleting: {}", effect),
+        }
+    }
+}
+
+impl FromZeroOrOneEffect for UpdateEffect {
+    fn from_zero_or_one(effect: usize) -> Self {
+        match effect {
+            0 => UpdateEffect::Ok,
+            1 => UpdateEffect::NotFound,
+            _ => panic!("unexpected effect when updating: {}", effect),
+        }
+    }
+}
