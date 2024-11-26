@@ -20,7 +20,7 @@ macro_rules! flake_id {
             }
         }
 
-        impl SysId for $type_name {
+        impl $crate::entity::SysId for $type_name {
             fn generate() -> Self {
                 Self::generate()
             }
