@@ -370,7 +370,7 @@ mod tests {
         type Connection = PgConn;
 
         async fn get_conn(&self) -> anyhow::Result<Self::Connection> {
-            todo!()
+            unreachable!()
         }
     }
 

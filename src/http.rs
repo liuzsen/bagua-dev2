@@ -272,7 +272,7 @@ mod tests {
         }
 
         fn uri(&self) -> http::Uri {
-            todo!()
+            unreachable!()
         }
 
         fn path(&self) -> &str {
@@ -280,7 +280,7 @@ mod tests {
         }
 
         fn headers(&self) -> Cow<http::HeaderMap> {
-            todo!()
+            unreachable!()
         }
     }
 
@@ -288,7 +288,7 @@ mod tests {
 
     impl<T> HttpJsonBody<T> for HttpJsonBodyImpl {
         fn json_body(self) -> T {
-            todo!()
+            unreachable!()
         }
     }
 
@@ -296,7 +296,7 @@ mod tests {
 
     impl<T> HttpJsonQuery<T> for HttpJsonQueryImpl {
         fn json_query(&self) -> T {
-            todo!()
+            unreachable!()
         }
     }
 
@@ -304,7 +304,7 @@ mod tests {
 
     impl HttpCredential for HttpCredentialImpl {
         fn credential(&self) -> Credential {
-            todo!()
+            unreachable!()
         }
     }
 
@@ -312,13 +312,13 @@ mod tests {
     where
         R: HttpJsonBody<u32> + HttpRequest,
     {
-        todo!()
+        unreachable!()
     }
 
     fn check_json_req() {
         type Req =
             HttpRequestCompose<HttpRequestImpl, HttpJsonBodyCompose<HttpJsonBodyImpl, ComposeNil>>;
-        let req: Req = todo!();
+        let req: Req = unreachable!();
         json_endpoint(req);
     }
 
@@ -326,7 +326,7 @@ mod tests {
     where
         R: HttpRequest + HttpJsonBody<u32> + HttpJsonQuery<u32> + HttpCredential,
     {
-        todo!()
+        unreachable!()
     }
 
     fn check_all() {
@@ -341,7 +341,7 @@ mod tests {
             >,
         >;
 
-        let req: Req = todo!();
+        let req: Req = unreachable!();
         all_endpoints(req);
     }
 }

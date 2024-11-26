@@ -544,7 +544,7 @@ impl EntityField {
                         let new_ident = Ident::new(&format!("{}Updater", last), last.span());
                         *last = new_ident;
                     }
-                    _ => todo!(),
+                    _ => unreachable!(),
                 }
                 let new_ty = parse_quote!(#ty);
                 field.ty = new_ty;

@@ -382,7 +382,7 @@ mod tests {
             type Updater = TvEpisodeUpdater;
 
             fn update_fields(&mut self, updater: Self::Updater) {
-                todo!()
+                unreachable!()
             }
         }
 
@@ -522,7 +522,7 @@ mod tests {
             type Updater = MovieUpdater;
 
             fn update_fields(&mut self, updater: Self::Updater) {
-                todo!()
+                unreachable!()
             }
         }
 

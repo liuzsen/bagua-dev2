@@ -7,7 +7,7 @@ pub struct FileNodeId(i32);
 
 impl SysId for FileNodeId {
     fn generate() -> Self {
-        todo!()
+        unreachable!()
     }
 }
 
