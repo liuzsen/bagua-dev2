@@ -1,3 +1,4 @@
+use diesel::backend::Backend;
 use diesel::{expression::exists::Exists, query_builder::AsQuery, Expression};
 use diesel_async::RunQueryDsl;
 use diesel_async::{
@@ -12,8 +13,8 @@ use crate::provider::SingletonProvider;
 
 use super::DbPool;
 
-pub trait SqlRunner {
-    type Connection: AsyncConnection + Send;
+pub trait SqlRunner<DB: Backend> {
+    type Connection: AsyncConnection<Backend = DB> + Send;
 
     async fn sql_execute<Sql>(&mut self, sql: Sql) -> anyhow::Result<usize>
     where
@@ -112,10 +113,11 @@ where
 {
 }
 
-impl<P> SqlRunner for DieselDriver<P>
+impl<P, DB> SqlRunner<DB> for DieselDriver<P>
 where
     P: DbPool,
-    P::Connection: diesel_async::AsyncConnection + Send,
+    P::Connection: diesel_async::AsyncConnection<Backend = DB> + Send,
+    DB: Backend,
 {
     type Connection = P::Connection;
 
