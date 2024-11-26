@@ -413,11 +413,16 @@ impl Entity {
         let entity_name = &self.name;
         let entity_ident = self.entity_ident_name();
         let sys_id_ty = &self.id_field().inner.ty;
+        let life = if self.biz_id_field_positions.is_empty() {
+            quote! {}
+        } else {
+            quote! {<'a>}
+        };
         let entity_trait = quote! {
             const _: () = {
                 use bagua::entity::Entity;
                 impl Entity for #entity_name {
-                    type Id<'a> = #entity_ident <'a>;
+                    type Id<'a> = #entity_ident #life;
 
                     type SysId = #sys_id_ty;
                 }
