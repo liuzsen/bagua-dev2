@@ -1,18 +1,36 @@
-use std::{collections::HashSet, hash::Hash};
+use std::collections::HashSet;
+use std::fmt::Debug;
+use std::{borrow::Borrow, hash::Hash};
 
 use indexmap::IndexSet;
 
 use super::field::{Reset, Unchanged, Unloaded};
+use super::SysId;
+
+pub trait ForeignEntity: Borrow<Self::Id> {
+    type Id: Clone + Eq + std::hash::Hash + Debug;
+}
+
+impl<T> ForeignEntity for T
+where
+    T: SysId,
+{
+    type Id = Self;
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ForeignEntities<Container> {
+pub enum ForeignEntities<C>
+where
+    C: ForeignContainer,
+    <C as ForeignContainer>::Item: ForeignEntity,
+{
     Unloaded,
-    Unchanged(Container),
-    Reset(Container),
+    Unchanged(C),
+    Reset(C),
     Changed {
-        original: ForeignEntitiesState<Container>,
-        add: Container,
-        remove: Container,
+        original: ForeignEntitiesState<C>,
+        add: C,
+        remove: HashSet<<<C as ForeignContainer>::Item as ForeignEntity>::Id>,
     },
 }
 
@@ -22,20 +40,40 @@ pub enum ForeignEntitiesState<T> {
     Data(T),
 }
 
-pub trait ForeignContainer: IntoIterator {
+pub trait ForeignContainer {
+    type Item;
+
     fn new() -> Self;
 
-    fn insert(&mut self, value: <Self as IntoIterator>::Item) -> bool;
+    fn insert(&mut self, value: <Self as ForeignContainer>::Item) -> bool;
 
-    fn remove(&mut self, value: &<Self as IntoIterator>::Item) -> bool;
+    fn remove<Q>(&mut self, value: &Q) -> bool
+    where
+        Self::Item: Borrow<Q>,
+        Q: Hash + Eq;
 
     fn clear(&mut self);
 
-    fn contains(&self, value: &<Self as IntoIterator>::Item) -> bool;
+    fn contains<Q>(&self, value: &Q) -> bool
+    where
+        Self::Item: Borrow<Q>,
+        Q: Hash + Eq;
+
+    fn is_empty(&self) -> bool;
+
+    fn extend<I: IntoIterator<Item = Self::Item>>(&mut self, iter: I);
 }
 
-impl<C> ForeignEntities<C> {
-    pub fn value_ref(&self) -> &C {
+impl<C> ForeignEntities<C>
+where
+    C: ForeignContainer,
+    <C as ForeignContainer>::Item: ForeignEntity,
+{
+    /// Returns the original foreign entities
+    ///
+    /// # Panics
+    /// This function will panic if the field is not loaded.
+    pub fn origin_value_ref(&self) -> &C {
         match self {
             ForeignEntities::Unloaded => {
                 panic!("Field is not loaded. Type = {}", std::any::type_name::<C>())
@@ -54,13 +92,51 @@ impl<C> ForeignEntities<C> {
             },
         }
     }
+
+    /// Returns the current foreign entities
+    ///
+    /// # Panics
+    /// This function will panic if the field is not loaded.
+    pub fn current_value(&self) -> C
+    where
+        C: Clone,
+        C: IntoIterator<Item = <C as ForeignContainer>::Item>,
+    {
+        match self {
+            ForeignEntities::Unloaded => {
+                panic!("Field is not loaded. Type = {}", std::any::type_name::<C>())
+            }
+            ForeignEntities::Unchanged(v) => v.clone(),
+            ForeignEntities::Reset(v) => v.clone(),
+            ForeignEntities::Changed {
+                original,
+                add,
+                remove,
+            } => match original {
+                ForeignEntitiesState::Unloaded => {
+                    panic!("Field is not loaded. Type = {}", std::any::type_name::<C>())
+                }
+                ForeignEntitiesState::Data(v) => {
+                    let mut container = v.clone();
+                    for c in remove {
+                        container.remove(&c);
+                    }
+
+                    container.extend(add.clone());
+
+                    container
+                }
+            },
+        }
+    }
 }
 
 impl<C> ForeignEntities<C>
 where
     C: ForeignContainer,
+    <C as ForeignContainer>::Item: ForeignEntity,
 {
-    pub fn add(&mut self, value: <C as IntoIterator>::Item) {
+    pub fn add(&mut self, value: <C as ForeignContainer>::Item) {
         match self {
             ForeignEntities::Unloaded => {
                 *self = ForeignEntities::Changed {
@@ -70,11 +146,14 @@ where
                         container.insert(value);
                         container
                     },
-                    remove: C::new(),
+                    remove: HashSet::new(),
                 }
             }
             ForeignEntities::Unchanged(origin) => {
-                if origin.contains(&value) {
+                // fixme: 或许应该移除这个检查，直接覆盖
+                // 但考虑到写数据库时默认会使用 do nothing on conflict 的策略，这里即使覆盖也无法写进数据库
+                let id: &<<C as ForeignContainer>::Item as ForeignEntity>::Id = value.borrow();
+                if origin.contains(&id) {
                     return;
                 }
 
@@ -87,7 +166,7 @@ where
                         container.insert(value);
                         container
                     },
-                    remove: C::new(),
+                    remove: HashSet::new(),
                 }
             }
             ForeignEntities::Reset(r) => {
@@ -96,21 +175,25 @@ where
             ForeignEntities::Changed {
                 original: _,
                 add,
-                remove: _,
+                remove,
             } => {
+                let id: &<<C as ForeignContainer>::Item as ForeignEntity>::Id = value.borrow();
+                if remove.remove(&id) {
+                    return;
+                }
                 add.insert(value);
             }
         }
     }
 
-    pub fn remove(&mut self, value: <C as IntoIterator>::Item) {
+    pub fn remove(&mut self, value: <<C as ForeignContainer>::Item as ForeignEntity>::Id) {
         match self {
             ForeignEntities::Unloaded => {
                 *self = ForeignEntities::Changed {
                     original: ForeignEntitiesState::Unloaded,
                     add: C::new(),
                     remove: {
-                        let mut container = C::new();
+                        let mut container = HashSet::new();
                         container.insert(value);
                         container
                     },
@@ -127,7 +210,7 @@ where
                     original: ForeignEntitiesState::Data(origin),
                     add: C::new(),
                     remove: {
-                        let mut container = C::new();
+                        let mut container = HashSet::new();
                         container.insert(value);
                         container
                     },
@@ -138,9 +221,12 @@ where
             }
             ForeignEntities::Changed {
                 original: _,
-                add: _,
+                add,
                 remove,
             } => {
+                if add.remove(&value) {
+                    return;
+                }
                 remove.insert(value);
             }
         }
@@ -157,70 +243,117 @@ where
     }
 }
 
-impl<C> Reset<ForeignEntities<C>> for C {
-    fn reset(self) -> ForeignEntities<C> {
-        ForeignEntities::Reset(self)
-    }
-}
-
-impl<C> Unloaded for ForeignEntities<C> {
-    fn unloaded() -> Self {
-        ForeignEntities::Unloaded
-    }
-}
-
-impl<C> Unchanged<ForeignEntities<C>> for C {
-    fn unchanged(self) -> ForeignEntities<C> {
-        ForeignEntities::Unchanged(self)
-    }
-}
-
-impl<T> ForeignContainer for IndexSet<T>
+impl<T> ForeignContainer for HashSet<T>
 where
     T: Hash + Eq,
 {
+    type Item = T;
+
     fn new() -> Self {
         Self::new()
     }
 
-    fn insert(&mut self, value: <Self as IntoIterator>::Item) -> bool {
-        IndexSet::insert(self, value)
+    fn insert(&mut self, value: <Self as ForeignContainer>::Item) -> bool {
+        self.insert(value)
     }
 
-    fn remove(&mut self, value: &<Self as IntoIterator>::Item) -> bool {
-        IndexSet::shift_remove(self, value)
+    fn remove<Q>(&mut self, value: &Q) -> bool
+    where
+        Self::Item: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.remove(value)
+    }
+
+    fn clear(&mut self) {
+        self.clear();
+    }
+
+    fn contains<Q>(&self, value: &Q) -> bool
+    where
+        Self::Item: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.contains(value)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn extend<I: IntoIterator<Item = Self::Item>>(&mut self, iter: I) {
+        Extend::extend(self, iter);
+    }
+}
+impl<T> ForeignContainer for IndexSet<T>
+where
+    T: Hash + Eq,
+{
+    type Item = T;
+
+    fn new() -> Self {
+        Self::new()
+    }
+
+    fn insert(&mut self, value: <Self as ForeignContainer>::Item) -> bool {
+        self.insert(value)
     }
 
     fn clear(&mut self) {
         IndexSet::clear(self);
     }
 
-    fn contains(&self, value: &<Self as IntoIterator>::Item) -> bool {
-        IndexSet::contains(self, value)
+    fn contains<Q>(&self, value: &Q) -> bool
+    where
+        Self::Item: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.contains(value)
+    }
+
+    fn is_empty(&self) -> bool {
+        IndexSet::is_empty(self)
+    }
+
+    fn extend<I: IntoIterator<Item = Self::Item>>(&mut self, iter: I) {
+        Extend::extend(self, iter);
+    }
+
+    fn remove<Q>(&mut self, value: &Q) -> bool
+    where
+        Self::Item: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.shift_remove(value)
     }
 }
 
-impl<T> ForeignContainer for HashSet<T>
+impl<C> Reset<ForeignEntities<C>> for C
 where
-    T: Hash + Eq,
+    C: ForeignContainer,
+    <C as ForeignContainer>::Item: ForeignEntity,
 {
-    fn new() -> Self {
-        Self::new()
+    fn reset(self) -> ForeignEntities<C> {
+        ForeignEntities::Reset(self)
     }
+}
 
-    fn insert(&mut self, value: <Self as IntoIterator>::Item) -> bool {
-        HashSet::insert(self, value)
+impl<C> Unloaded for ForeignEntities<C>
+where
+    C: ForeignContainer,
+    <C as ForeignContainer>::Item: ForeignEntity,
+{
+    fn unloaded() -> Self {
+        ForeignEntities::Unloaded
     }
+}
 
-    fn remove(&mut self, value: &<Self as IntoIterator>::Item) -> bool {
-        HashSet::remove(self, value)
-    }
-
-    fn clear(&mut self) {
-        HashSet::clear(self);
-    }
-
-    fn contains(&self, value: &<Self as IntoIterator>::Item) -> bool {
-        HashSet::contains(self, value)
+impl<C> Unchanged<ForeignEntities<C>> for C
+where
+    C: ForeignContainer,
+    <C as ForeignContainer>::Item: ForeignEntity,
+{
+    fn unchanged(self) -> ForeignEntities<C> {
+        ForeignEntities::Unchanged(self)
     }
 }

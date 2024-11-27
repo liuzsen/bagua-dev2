@@ -1,3 +1,5 @@
+use std::{fmt::Debug, hash::Hash};
+
 use updater::Updater;
 
 pub mod field;
@@ -14,7 +16,7 @@ pub trait Entity: GuardedStruct {
     type SysId: Eq;
 }
 
-pub trait SysId {
+pub trait SysId: Eq + Clone + Debug + Hash {
     fn generate() -> Self;
 }
 
@@ -160,6 +162,12 @@ mod tests {
         rating: crate::entity::field::Field<Option<f64>>,
         genres: crate::entity::foreign::ForeignEntities<IndexSet<GenreId>>,
         album: crate::entity::flatten::FlattenStruct<MediaAlbum>,
+    }
+
+    impl SysId for GenreId {
+        fn generate() -> Self {
+            unreachable!()
+        }
     }
 
     impl GuardedStruct for Media {
@@ -586,7 +594,7 @@ mod tests {
 
     use album_def::*;
 
-    use super::{updater::Updater, GuardedStruct};
+    use super::{updater::Updater, GuardedStruct, SysId};
     mod album_def {
         // Recursive expansion of FieldGuard macro
         // ========================================
