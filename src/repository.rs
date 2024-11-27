@@ -1,4 +1,10 @@
-use crate::entity::{subset::Subset, Entity};
+use std::collections::HashSet;
+
+use crate::entity::{
+    foreign::{ForeignContainer, ForeignEntities, ForeignEntity},
+    subset::Subset,
+    Entity,
+};
 
 pub trait Repository<E: Entity> {
     async fn find<S, I>(&mut self, id: I) -> anyhow::Result<Option<E>>
@@ -161,4 +167,80 @@ macro_rules! check_delete_effect {
             return Ok(effect);
         }
     };
+}
+
+pub trait ForeignEntitiesOperator<LocalId, C>
+where
+    C: ForeignContainer,
+    <C as ForeignContainer>::Item: ForeignEntity,
+    C: IntoIterator<Item = <C as ForeignContainer>::Item>,
+    for<'a> &'a C: IntoIterator<Item = &'a <C as ForeignContainer>::Item>,
+{
+    async fn init_foreign(
+        &mut self,
+        id: &LocalId,
+        foreign_entities: &ForeignEntities<C>,
+    ) -> anyhow::Result<()>;
+
+    async fn update_foreign(
+        &mut self,
+        id: &LocalId,
+        foreign_entities: &ForeignEntities<C>,
+    ) -> anyhow::Result<UpdateEffect> {
+        match foreign_entities {
+            ForeignEntities::Unloaded => {}
+            ForeignEntities::Unchanged(_) => {}
+            ForeignEntities::Reset(reset) => {
+                let effect = self.reset_foreign(id, reset).await?;
+                if !effect.is_ok() {
+                    return Ok(effect);
+                };
+            }
+            ForeignEntities::Changed {
+                original: _,
+                add,
+                remove,
+            } => {
+                let effect = self.add_foreign(&id, add).await?;
+                if !effect.is_ok() {
+                    return Ok(effect);
+                };
+                self.remove_foreign(&id, remove).await?;
+            }
+        }
+
+        Ok(UpdateEffect::Ok)
+    }
+
+    async fn reset_foreign<'a>(
+        &mut self,
+        id: &'a LocalId,
+        foreign_entities: &'a C,
+    ) -> anyhow::Result<UpdateEffect> {
+        self.clear_foreign(id).await?;
+
+        let effect = self.add_foreign(id, foreign_entities).await?;
+        if !effect.is_ok() {
+            return Ok(effect);
+        };
+
+        Ok(UpdateEffect::Ok)
+    }
+
+    async fn clear_foreign(&mut self, id: &LocalId) -> anyhow::Result<()>;
+
+    async fn remove_foreign(
+        &mut self,
+        id: &LocalId,
+        foreign_entities: &HashSet<<<C as ForeignContainer>::Item as ForeignEntity>::Id>,
+    ) -> anyhow::Result<()>;
+
+    async fn add_foreign<'a, F>(
+        &mut self,
+        id: &'a LocalId,
+        foreign_entities: F,
+    ) -> anyhow::Result<UpdateEffect>
+    where
+        F: IntoIterator<Item = &'a <C as ForeignContainer>::Item>,
+        <F as IntoIterator>::Item: 'a;
 }
