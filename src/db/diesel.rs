@@ -16,16 +16,16 @@ use super::DbPool;
 pub trait SqlRunner<DB: Backend> {
     type Connection: AsyncConnection<Backend = DB> + Send;
 
-    async fn sql_execute<Sql>(&mut self, sql: Sql) -> anyhow::Result<usize>
+    async fn sql_execute<Sql>(&mut self, sql: Sql) -> Result<usize, SqlError>
     where
         Sql: ExecuteDsl<Self::Connection>;
 
-    async fn sql_result<'query, U, Sql>(&mut self, sql: Sql) -> anyhow::Result<Option<U>>
+    async fn sql_result<'query, U, Sql>(&mut self, sql: Sql) -> Result<Option<U>, SqlError>
     where
         U: Send,
         Sql: LoadQuery<'query, Self::Connection, U> + 'query;
 
-    async fn sql_results<'query, U, Sql>(&mut self, sql: Sql) -> anyhow::Result<Vec<U>>
+    async fn sql_results<'query, U, Sql>(&mut self, sql: Sql) -> Result<Vec<U>, SqlError>
     where
         U: Send,
         Sql: LoadQuery<'query, Self::Connection, U> + 'query;
@@ -36,6 +36,57 @@ pub trait SqlRunner<DB: Backend> {
         diesel::dsl::select<diesel::dsl::exists<Sql>>:
             LoadQuery<'query, Self::Connection, bool> + 'query + Send,
         diesel::dsl::select<Exists<Sql>>: AsQuery;
+}
+
+pub enum SqlError {
+    Anyhow(anyhow::Error),
+    Diesel(diesel::result::Error),
+}
+
+impl From<anyhow::Error> for SqlError {
+    fn from(e: anyhow::Error) -> Self {
+        SqlError::Anyhow(e)
+    }
+}
+
+impl From<diesel::result::Error> for SqlError {
+    fn from(e: diesel::result::Error) -> Self {
+        SqlError::Diesel(e)
+    }
+}
+
+impl From<SqlError> for anyhow::Error {
+    fn from(e: SqlError) -> Self {
+        match e {
+            SqlError::Anyhow(e) => e,
+            SqlError::Diesel(e) => e.into(),
+        }
+    }
+}
+
+impl SqlError {
+    pub fn is_foreign_key_err(&self) -> bool {
+        match self {
+            SqlError::Diesel(diesel::result::Error::DatabaseError(
+                diesel::result::DatabaseErrorKind::ForeignKeyViolation,
+                _,
+            )) => true,
+            _ => false,
+        }
+    }
+}
+
+pub trait IsDbError {
+    fn is_foreign_key_err(&self) -> bool;
+}
+
+impl<T> IsDbError for Result<T, SqlError> {
+    fn is_foreign_key_err(&self) -> bool {
+        match self {
+            Ok(_) => false,
+            Err(e) => e.is_foreign_key_err(),
+        }
+    }
 }
 
 pub struct DieselDriver<P>
@@ -121,7 +172,7 @@ where
 {
     type Connection = P::Connection;
 
-    async fn sql_execute<Sql>(&mut self, sql: Sql) -> anyhow::Result<usize>
+    async fn sql_execute<Sql>(&mut self, sql: Sql) -> Result<usize, SqlError>
     where
         Sql: diesel_async::methods::ExecuteDsl<Self::Connection>,
     {
@@ -129,7 +180,7 @@ where
         Ok(sql.execute(conn).await?)
     }
 
-    async fn sql_result<'query, U, Sql>(&mut self, sql: Sql) -> anyhow::Result<Option<U>>
+    async fn sql_result<'query, U, Sql>(&mut self, sql: Sql) -> Result<Option<U>, SqlError>
     where
         U: Send,
         Sql: diesel_async::methods::LoadQuery<'query, Self::Connection, U> + 'query,
@@ -139,7 +190,7 @@ where
         Ok(sql.get_result(conn).await.optional()?)
     }
 
-    async fn sql_results<'query, U, Sql>(&mut self, sql: Sql) -> anyhow::Result<Vec<U>>
+    async fn sql_results<'query, U, Sql>(&mut self, sql: Sql) -> Result<Vec<U>, SqlError>
     where
         U: Send,
         Sql: diesel_async::methods::LoadQuery<'query, Self::Connection, U> + 'query,
