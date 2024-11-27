@@ -608,6 +608,10 @@ impl EntityField {
                     field: {
                         let mut field = field.clone();
                         let field_name = format!("remove_{}", origin_ident);
+                        let origin_ty = &self.inner.ty;
+                        field.ty = parse_quote!{
+                           Option<std::collections::HashSet<<<#origin_ty as bagua::entity::foreign::ForeignContainer>::Item as bagua::entity::foreign::ForeignEntity>::Id>>
+                        };
                         field.ident = Some(Ident::new(&field_name, origin_ident.span()));
                         field
                     },

@@ -1,6 +1,9 @@
-use std::collections::HashSet;
+use std::{borrow::Borrow, collections::HashSet};
 
-use bagua::{entity::SysId, Entity, GuardedStruct};
+use bagua::{
+    entity::{foreign::ForeignEntity, SysId},
+    Entity, ForeignEntity, GuardedStruct,
+};
 
 #[derive(PartialEq, Eq, Clone, Default, Copy, Hash, Debug)]
 pub struct FileNodeId(i32);
@@ -21,7 +24,14 @@ pub struct FileNode {
     #[entity(flatten)]
     permits: Permits,
     #[entity(foreign)]
-    foreign: HashSet<FileNodeId>,
+    foreign: HashSet<FileNodeForeign>,
+}
+
+#[derive(Debug, ForeignEntity)]
+pub struct FileNodeForeign {
+    #[foreign(id)]
+    id: FileNodeId,
+    _other_field: String,
 }
 
 #[GuardedStruct]

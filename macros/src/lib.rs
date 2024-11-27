@@ -87,3 +87,12 @@ pub fn InitFunction(args: TokenStream, item: TokenStream) -> TokenStream {
 
     stream
 }
+
+#[proc_macro_derive(ForeignEntity, attributes(foreign))]
+pub fn derive_foreign_entity(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as entity::foreign_entity::ForeignEntity);
+    input
+        .expand()
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}

@@ -8,7 +8,7 @@ use super::field::{Reset, Unchanged, Unloaded};
 use super::SysId;
 
 pub trait ForeignEntity: Borrow<Self::Id> {
-    type Id: Clone + Eq + std::hash::Hash + Debug;
+    type Id: Clone + Eq + std::hash::Hash;
 }
 
 impl<T> ForeignEntity for T
@@ -18,7 +18,7 @@ where
     type Id = Self;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum ForeignEntities<C>
 where
     C: ForeignContainer,
@@ -32,6 +32,31 @@ where
         add: C,
         remove: HashSet<<<C as ForeignContainer>::Item as ForeignEntity>::Id>,
     },
+}
+
+impl<C> Debug for ForeignEntities<C>
+where
+    C: ForeignContainer + Debug,
+    <C as ForeignContainer>::Item: ForeignEntity,
+    HashSet<<<C as ForeignContainer>::Item as ForeignEntity>::Id>: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unloaded => write!(f, "Unloaded"),
+            Self::Unchanged(arg0) => f.debug_tuple("Unchanged").field(arg0).finish(),
+            Self::Reset(arg0) => f.debug_tuple("Reset").field(arg0).finish(),
+            Self::Changed {
+                original,
+                add,
+                remove,
+            } => f
+                .debug_struct("Changed")
+                .field("original", original)
+                .field("add", add)
+                .field("remove", remove)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
