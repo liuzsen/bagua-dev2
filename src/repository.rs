@@ -129,3 +129,36 @@ impl FromZeroOrOneEffect for UpdateEffect {
         }
     }
 }
+
+/// Check UpdateEffect and return if not ok
+#[macro_export]
+macro_rules! check_update_effect {
+    ($effect:expr) => {
+        let effect: ::bagua::repository::UpdateEffect = $effect;
+        if !effect.is_ok() {
+            return Ok(effect);
+        }
+    };
+}
+
+/// Check SaveEffect and return if not ok
+#[macro_export]
+macro_rules! check_save_effect {
+    ($effect:expr) => {
+        let effect: ::bagua::repository::SaveEffect = $effect;
+        if !effect.is_ok() {
+            return Ok(effect);
+        }
+    };
+}
+
+/// Check DeleteEffect and return if not ok
+#[macro_export]
+macro_rules! check_delete_effect {
+    ($effect:expr) => {
+        let effect: ::bagua::repository::DeleteEffect = $effect;
+        if !effect.is_ok() {
+            return Ok(effect);
+        }
+    };
+}
