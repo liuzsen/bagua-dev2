@@ -11,7 +11,7 @@ use std::{cell::UnsafeCell, rc::Rc};
 use crate::provider::Provider;
 use crate::provider::SingletonProvider;
 
-use super::DbPool;
+use super::{DbDriver, DbPool};
 
 pub trait SqlRunner<DB: Backend> {
     type Connection: AsyncConnection<Backend = DB> + Send;
@@ -138,6 +138,17 @@ where
                 }
             }
         }
+    }
+}
+
+impl<P> DbDriver for DieselDriver<P>
+where
+    P: Clone + DbPool,
+{
+    type Connection = P::Connection;
+
+    async fn get_connection(&mut self) -> anyhow::Result<&mut Self::Connection> {
+        self.fetch_or_reuse_conn().await
     }
 }
 
