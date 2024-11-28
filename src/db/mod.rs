@@ -2,7 +2,7 @@
 pub mod diesel;
 pub mod transaction;
 
-pub trait DbDriver: 'static {
+pub trait DbDriver: 'static + Clone {
     type Connection;
 
     async fn get_connection(&mut self) -> anyhow::Result<&mut Self::Connection>;

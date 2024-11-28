@@ -8,7 +8,7 @@ use crate::{
     result::BizResult,
 };
 
-pub trait TransactionMaker: 'static {
+pub trait TransactionMaker: 'static + Clone {
     async fn do_transaction<F, T, E>(&mut self, tx: F) -> BizResult<T, E>
     where
         F: Future<Output = BizResult<T, E>>;
