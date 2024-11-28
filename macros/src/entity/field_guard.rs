@@ -136,7 +136,7 @@ impl Entity {
             &format!("{}_subsets", self.name).to_case(Case::Snake),
             proc_macro2::Span::call_site(),
         );
-        let output = quote! {
+        let output = quote_spanned! { self.name.span() =>
             #[allow(unused)]
             pub use #subset_mod_name::*;
             pub mod #subset_mod_name {
@@ -176,7 +176,7 @@ impl Entity {
             }
         });
         let entity_ident = &self.name;
-        let output = quote! {
+        let output = quote_spanned! { self.name.span() =>
             #(#attrs)*
             #(#[#model_attrs])*
             pub struct #model_ident {
@@ -273,7 +273,7 @@ impl Entity {
         let attrs = &self.attrs;
         let updater_attrs = &self.updater_attrs;
 
-        let output = quote! {
+        let output = quote_spanned! { self.name.span() =>
             #(#attrs)*
             #(#[#updater_attrs])*
             #[derive(Default)]
@@ -392,7 +392,7 @@ impl ToTokens for ReadOnlyEntity {
             attrs,
             fields,
         } = self;
-        let output = quote! {
+        let output = quote_spanned! { self.name.span() =>
             #(#attrs)*
             pub struct #name {
                 #fields
