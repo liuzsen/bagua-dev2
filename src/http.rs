@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 /// This trait will have some breaking changes after actix-web 5.0 is released
 /// See: https://github.com/actix/actix-web/issues/3384
@@ -15,36 +15,21 @@ pub trait HttpRequest {
 }
 
 pub trait HttpJsonBody<T> {
-    fn json_body(self) -> T;
+    fn get_body(self) -> T;
 }
 
 pub trait HttpJsonQuery<T> {
-    fn json_query(&self) -> T;
-}
-
-pub struct Credential {
-    pub id: String,
-    pub role: Cow<'static, str>,
+    fn get_query(self) -> T;
 }
 
 pub trait HttpCredential {
-    fn credential(&self) -> Credential;
+    type Credential;
 
-    fn parse_id<T>(&self) -> Result<T, <T as std::str::FromStr>::Err>
-    where
-        T: std::str::FromStr,
-    {
-        let id = &self.credential().id;
-        id.parse()
-    }
+    fn credential(&self) -> Self::Credential;
+}
 
-    fn parse_role<T>(&self) -> Result<T, <T as std::str::FromStr>::Err>
-    where
-        T: std::str::FromStr,
-    {
-        let role = &self.credential().role;
-        role.parse()
-    }
+pub struct IdCredential<T> {
+    pub id: Arc<T>,
 }
 
 pub struct HttpRequestCompose<A, B> {
@@ -98,8 +83,8 @@ impl<A, B, T> HttpJsonBody<T> for HttpJsonBodyCompose<A, B>
 where
     A: HttpJsonBody<T>,
 {
-    fn json_body(self) -> T {
-        self.this.json_body()
+    fn get_body(self) -> T {
+        self.this.get_body()
     }
 }
 
@@ -107,8 +92,8 @@ impl<A, B, T> HttpJsonQuery<T> for HttpJsonQueryCompose<A, B>
 where
     A: HttpJsonQuery<T>,
 {
-    fn json_query(&self) -> T {
-        self.this.json_query()
+    fn get_query(self) -> T {
+        self.this.get_query()
     }
 }
 
@@ -116,7 +101,9 @@ impl<A, B> HttpCredential for HttpCredentialCompose<A, B>
 where
     A: HttpCredential,
 {
-    fn credential(&self) -> Credential {
+    type Credential = A::Credential;
+
+    fn credential(&self) -> Self::Credential {
         self.this.credential()
     }
 }
@@ -150,26 +137,18 @@ macro_rules! impl_http_request_for_that {
     };
 }
 
-impl_http_request_for_that!(HttpJsonBodyCompose);
-impl_http_request_for_that!(HttpJsonQueryCompose);
-impl_http_request_for_that!(HttpCredentialCompose);
-
 macro_rules! impl_http_json_body_for_that {
     ($compose:ident) => {
         impl<A, B, T> HttpJsonBody<T> for $compose<A, B>
         where
             B: HttpJsonBody<T>,
         {
-            fn json_body(self) -> T {
-                self.that.json_body()
+            fn get_body(self) -> T {
+                self.that.get_body()
             }
         }
     };
 }
-
-impl_http_json_body_for_that!(HttpRequestCompose);
-impl_http_json_body_for_that!(HttpJsonQueryCompose);
-impl_http_json_body_for_that!(HttpCredentialCompose);
 
 macro_rules! impl_http_json_query_for_that {
     ($compose:ident) => {
@@ -177,16 +156,12 @@ macro_rules! impl_http_json_query_for_that {
         where
             B: HttpJsonQuery<T>,
         {
-            fn json_query(&self) -> T {
-                self.that.json_query()
+            fn get_query(self) -> T {
+                self.that.get_query()
             }
         }
     };
 }
-
-impl_http_json_query_for_that!(HttpRequestCompose);
-impl_http_json_query_for_that!(HttpJsonBodyCompose);
-impl_http_json_query_for_that!(HttpCredentialCompose);
 
 macro_rules! impl_credential_for_that {
     ($compose:ident) => {
@@ -194,22 +169,104 @@ macro_rules! impl_credential_for_that {
         where
             B: HttpCredential,
         {
-            fn credential(&self) -> Credential {
+            type Credential = B::Credential;
+
+            fn credential(&self) -> Self::Credential {
                 self.that.credential()
             }
         }
     };
 }
 
+impl_http_json_body_for_that!(HttpRequestCompose);
+impl_http_json_query_for_that!(HttpRequestCompose);
 impl_credential_for_that!(HttpRequestCompose);
+
+impl_http_request_for_that!(HttpJsonBodyCompose);
+impl_http_json_query_for_that!(HttpJsonBodyCompose);
 impl_credential_for_that!(HttpJsonBodyCompose);
+
+impl_http_request_for_that!(HttpJsonQueryCompose);
+impl_http_json_body_for_that!(HttpJsonQueryCompose);
 impl_credential_for_that!(HttpJsonQueryCompose);
 
-#[cfg(feature = "actix-web")]
-mod impl_traits {
-    use std::{borrow::Cow, str::FromStr};
+impl_http_request_for_that!(HttpCredentialCompose);
+impl_http_json_body_for_that!(HttpCredentialCompose);
+impl_http_json_query_for_that!(HttpCredentialCompose);
 
-    use super::HttpRequest;
+#[cfg(feature = "actix-web")]
+pub mod actix_web_impl {
+    use std::{borrow::Cow, convert::Infallible, str::FromStr, sync::Arc};
+
+    use actix_web::FromRequest;
+    use futures::{future::LocalBoxFuture, FutureExt};
+
+    use super::{
+        ComposeNil, HttpCredential, HttpCredentialCompose, HttpJsonBody, HttpJsonBodyCompose,
+        HttpJsonQuery, HttpJsonQueryCompose, HttpRequest, HttpRequestCompose,
+    };
+
+    pub type HttpRequestImpl = actix_web::HttpRequest;
+    pub type HttpJsonBodyImpl<T> = actix_web::web::Json<T>;
+    pub type HttpJsonQueryImpl<T> = actix_web::web::Query<T>;
+    pub type HttpCredentialImpl<T> = ActixIdentityCredential<T>;
+
+    impl FromRequest for ComposeNil {
+        type Error = Infallible;
+
+        type Future = std::future::Ready<Result<Self, Self::Error>>;
+
+        fn from_request(
+            _req: &actix_web::HttpRequest,
+            _payload: &mut actix_web::dev::Payload,
+        ) -> Self::Future {
+            std::future::ready(Ok(ComposeNil))
+        }
+    }
+
+    macro_rules! try_result {
+        ($expr:expr) => {
+            match $expr {
+                Ok(val) => val,
+                Err(err) => return Err(err.into()),
+            }
+        };
+    }
+
+    macro_rules! compose_impl_from_request {
+        ($compose:ident) => {
+            impl<A, B> FromRequest for $compose<A, B>
+            where
+                A: FromRequest,
+                B: FromRequest,
+            {
+                type Error = actix_web::Error;
+
+                type Future = LocalBoxFuture<'static, Result<Self, Self::Error>>;
+
+                fn from_request(
+                    req: &actix_web::HttpRequest,
+                    payload: &mut actix_web::dev::Payload,
+                ) -> Self::Future {
+                    let req = req.clone();
+                    let mut payload = payload.take();
+
+                    async move {
+                        let a = try_result!(A::from_request(&req, &mut payload).await);
+                        let b = try_result!(B::from_request(&req, &mut payload).await);
+
+                        Ok($compose { this: a, that: b })
+                    }
+                    .boxed_local()
+                }
+            }
+        };
+    }
+
+    compose_impl_from_request!(HttpRequestCompose);
+    compose_impl_from_request!(HttpCredentialCompose);
+    compose_impl_from_request!(HttpJsonBodyCompose);
+    compose_impl_from_request!(HttpJsonQueryCompose);
 
     impl HttpRequest for actix_web::HttpRequest {
         fn method(&self) -> http::Method {
@@ -252,6 +309,84 @@ mod impl_traits {
             self.uri().path()
         }
     }
+
+    impl<T> HttpJsonBody<T> for actix_web::web::Json<T> {
+        fn get_body(self) -> T {
+            self.0
+        }
+    }
+
+    impl<T> HttpJsonQuery<T> for actix_web::web::Query<T> {
+        fn get_query(self) -> T {
+            self.0
+        }
+    }
+
+    pub struct ActixIdentityCredential<T> {
+        id: Arc<T>,
+    }
+
+    impl<T> ActixIdentityCredential<T>
+    where
+        T: FromStr,
+        <T as FromStr>::Err: std::fmt::Display,
+    {
+        fn try_from_identity(identity: actix_identity::Identity) -> Result<Self, actix_web::Error> {
+            let identity = identity;
+            let id = match identity.id() {
+                Ok(id) => id,
+                Err(err) => {
+                    return Err(err.into());
+                }
+            };
+            let id = match T::from_str(&id) {
+                Ok(id) => id,
+                Err(err) => {
+                    return Err(actix_web::error::ErrorBadRequest(format!(
+                        "invalid id: {}",
+                        err
+                    )));
+                }
+            };
+
+            Ok(Self { id: Arc::new(id) })
+        }
+    }
+
+    impl<T> FromRequest for ActixIdentityCredential<T>
+    where
+        T: FromStr,
+        <T as FromStr>::Err: std::fmt::Display,
+    {
+        type Error = actix_web::Error;
+
+        type Future = std::future::Ready<Result<Self, Self::Error>>;
+
+        fn from_request(
+            req: &actix_web::HttpRequest,
+            payload: &mut actix_web::dev::Payload,
+        ) -> Self::Future {
+            let identity = actix_identity::Identity::from_request(req, payload).into_inner();
+            let identity = match identity {
+                Ok(identity) => identity,
+                Err(err) => {
+                    return std::future::ready(Err(err));
+                }
+            };
+
+            std::future::ready(ActixIdentityCredential::try_from_identity(identity))
+        }
+    }
+
+    impl<T> HttpCredential for ActixIdentityCredential<T> {
+        type Credential = super::IdCredential<T>;
+
+        fn credential(&self) -> Self::Credential {
+            super::IdCredential {
+                id: self.id.clone(),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -287,7 +422,7 @@ mod tests {
     struct HttpJsonBodyImpl {}
 
     impl<T> HttpJsonBody<T> for HttpJsonBodyImpl {
-        fn json_body(self) -> T {
+        fn get_body(self) -> T {
             unreachable!()
         }
     }
@@ -295,7 +430,7 @@ mod tests {
     struct HttpJsonQueryImpl {}
 
     impl<T> HttpJsonQuery<T> for HttpJsonQueryImpl {
-        fn json_query(&self) -> T {
+        fn get_query(self) -> T {
             unreachable!()
         }
     }
@@ -303,7 +438,9 @@ mod tests {
     struct HttpCredentialImpl {}
 
     impl HttpCredential for HttpCredentialImpl {
-        fn credential(&self) -> Credential {
+        type Credential = IdCredential<String>;
+
+        fn credential(&self) -> Self::Credential {
             unreachable!()
         }
     }
