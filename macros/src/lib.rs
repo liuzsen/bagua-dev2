@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
 
 mod entity;
+mod err_enum;
 mod get_config;
 mod has_changed;
 mod init;
@@ -95,4 +96,17 @@ pub fn derive_foreign_entity(input: TokenStream) -> TokenStream {
         .expand()
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+#[allow(non_snake_case)]
+#[proc_macro_attribute]
+pub fn BizErrorEnum(_args: TokenStream, item: TokenStream) -> TokenStream {
+    let entity = syn::parse_macro_input!(item as err_enum::ErrEnum);
+    let output = entity
+        .expand()
+        .unwrap_or_else(syn::Error::into_compile_error);
+
+    let stream: TokenStream = output.into();
+
+    stream
 }
