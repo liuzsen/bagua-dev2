@@ -109,8 +109,8 @@ pub trait FromZeroOrOneEffect {
 impl FromZeroOrOneEffect for SaveEffect {
     fn from_zero_or_one(effect: usize) -> Self {
         match effect {
-            0 => SaveEffect::Ok,
-            1 => SaveEffect::Conflict,
+            0 => SaveEffect::Conflict,
+            1 => SaveEffect::Ok,
             _ => panic!("unexpected effect when saving: {}", effect),
         }
     }
@@ -119,8 +119,8 @@ impl FromZeroOrOneEffect for SaveEffect {
 impl FromZeroOrOneEffect for DeleteEffect {
     fn from_zero_or_one(effect: usize) -> Self {
         match effect {
-            0 => DeleteEffect::Ok,
-            1 => DeleteEffect::NotFound,
+            0 => DeleteEffect::NotFound,
+            1 => DeleteEffect::Ok,
             _ => panic!("unexpected effect when deleting: {}", effect),
         }
     }
@@ -129,8 +129,8 @@ impl FromZeroOrOneEffect for DeleteEffect {
 impl FromZeroOrOneEffect for UpdateEffect {
     fn from_zero_or_one(effect: usize) -> Self {
         match effect {
-            0 => UpdateEffect::Ok,
-            1 => UpdateEffect::NotFound,
+            0 => UpdateEffect::NotFound,
+            1 => UpdateEffect::Ok,
             _ => panic!("unexpected effect when updating: {}", effect),
         }
     }
