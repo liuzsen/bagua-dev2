@@ -492,6 +492,123 @@ pub mod biz_err {
     }
 }
 
+/// Macro to generate http api
+///
+/// # Example
+///
+/// ```rust
+/// use bagua::http_api;
+///
+/// http_api!(post_create; post::create: HttpJsonBody + HttpCredential);
+/// ```
+#[macro_export]
+macro_rules! http_api {
+    ($fn_name:ident $(($(_: $extractor_ty:ty)*))?, $Va:ident $(::$Vb:ident)*) => {
+        pub async fn $fn_name($($(_: $extractor_ty,)*)? )
+        -> common::http::HttpApiResponse<crate::adapters::api_http::$Va $(::$Vb)*::Response> {
+            use crate::infrastructure::types:: $Va $(::$Vb)* ::{Adapter, UseCase};
+            use crate::infrastructure::types::TransactionMaker;
+            use bagua::provider::Provider;
+            use bagua::usecase::TxnUseCase;
+            use common::http::Adapter as _;
+
+            type UC = TxnUseCase<TransactionMaker, UseCase>;
+
+            let uc = match UC::provide() {
+                Ok(uc) => uc,
+                Err(err) => {
+                    return From::from(err);
+                }
+            };
+
+            let mut adapter = Adapter {};
+            adapter.run((), uc).await
+        }
+    };
+
+    ($fn_name:ident $(($(_: $extractor_ty:ty)*))?, $Va:ident $(::$Vb:ident)* : $bound1:ident $(<$generic1:ty>)? $(+ $bounds:ident $(<$generics:ty>)?)*) => {
+        pub async fn $fn_name($($(_: $extractor_ty,)*)? req: http_api!(@compose $Va $(::$Vb)*; $bound1 $(<$generic1>)?, $($bounds $(<$generics>)?),*))
+        -> common::http::HttpApiResponse<crate::adapters::api_http::$Va $(::$Vb)*::Response> {
+            use crate::infrastructure::types:: $Va $(::$Vb)* ::{Adapter, UseCase};
+            use crate::infrastructure::types::TransactionMaker;
+            use bagua::provider::Provider;
+            use bagua::usecase::TxnUseCase;
+            use common::http::Adapter as _;
+
+            type UC = TxnUseCase<TransactionMaker, UseCase>;
+
+            let uc = match UC::provide() {
+                Ok(uc) => uc,
+                Err(err) => {
+                    return From::from(err);
+                }
+            };
+
+            let mut adapter = Adapter {};
+            adapter.run(req, uc).await
+        }
+    };
+
+    (@compose $Va:ident $(::$Vb:ident)*; HttpRequest, $($bounds:ident $(<$generics:ty>)?),* $(,)*) => {
+        bagua::http::HttpRequestCompose<
+            crate::infrastructure::types::HttpRequest,
+            http_api!(@compose $Va $(::$Vb)*; $($bounds $(<$generics>)?),* ,),
+        >
+    };
+
+    (@compose $Va:ident $(::$Vb:ident)*; HttpCredential, $($bounds:ident $(<$generics:ty>)?),* $(,)*) => {
+        bagua::http::HttpCredentialCompose<
+            crate::infrastructure::types::HttpCredential,
+            http_api!(@compose $Va $(::$Vb)*; $($bounds $(<$generics>)?),* ,),
+        >
+    };
+
+    (@compose $Va:ident $(::$Vb:ident)*;  HttpJsonQuery, $($bounds:ident $(<$generics:ty>)?),* $(,)*) => {
+        bagua::http::HttpJsonQueryCompose<
+            crate::infrastructure::types::HttpJsonQuery<
+                crate::adapters::api_http:: $Va $(::$Vb)* ::Request,
+            >,
+            http_api!(@compose $Va $(::$Vb)*; $($bounds $(<$generics>)?),* ,),
+        >
+    };
+
+    (@compose $Va:ident $(::$Vb:ident)*;  HttpJsonQuery <$generic:ty>, $($bounds:ident $(<$generics:ty>)?),* $(,)*) => {
+        bagua::http::HttpJsonQueryCompose<
+            crate::infrastructure::types::HttpJsonQuery<$generic>,
+            http_api!(@compose $Va $(::$Vb)*; $($bounds $(<$generics>)?),* ,),
+        >
+    };
+
+    (@compose $Va:ident $(::$Vb:ident)*;  HttpJsonBody, $($bounds:ident $(<$generics:ty>)?),* $(,)*) => {
+        bagua::http::HttpJsonBodyCompose<
+            crate::infrastructure::types::HttpJsonBody<
+                crate::adapters::api_http:: $Va $(::$Vb)* ::Request,
+            >,
+            http_api!(@compose $Va $(::$Vb)*; $($bounds $(<$generics>)?),* ,),
+        >
+    };
+
+    (@compose $Va:ident $(::$Vb:ident)*;  HttpJsonBody <$generic:ty>, $($bounds:ident $(<$generics:ty>)?),* $(,)*) => {
+        bagua::http::HttpJsonBodyCompose<
+            crate::infrastructure::types::HttpJsonBody<$generic>,
+            http_api!(@compose $Va $(::$Vb)*; $($bounds $(<$generics>)?),* ,),
+        >
+    };
+
+    (@compose $Va:ident $(::$Vb:ident)*;  $bound1:ident $(<$generic:ty>)?, $($bounds:ident $(<$generics:ty>)?),* $(,)*) => {
+        paste::paste! {
+            bagua::http::[<$bound1 Compose>]<
+                crate::infrastructure::types::$bound1 $(<$generic>)?,
+                http_api!(@compose $Va $(::$Vb)*; $($bounds $(<$generics>)?),* ,),
+            >
+        }
+    };
+
+    (@compose $Va:ident $(::$Vb:ident)*; $(,)*) => {
+        bagua::http::ComposeNil
+    };
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(dead_code, unreachable_code, unused)]
