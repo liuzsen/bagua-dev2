@@ -609,6 +609,157 @@ macro_rules! http_api {
     };
 }
 
+/// Macro to generate actix route
+///
+/// # Example
+///
+/// ```rust
+/// pub fn route(cfg: &mut web::ServiceConfig) {
+///     let mw1 = actix_web::middleware::from_fn(my_middleware);
+///     let mw2 = actix_web::middleware::from_fn(my_middleware);
+///     let mw3 = actix_web::middleware::from_fn(my_middleware);
+///
+///     bagua::actix_route!(
+///         router = cfg;
+///
+///         {
+///             "ping" GET => ping,
+///         }
+///
+///         "admin" (mw: mw1) {
+///             "aa" (mw: mw2)  {
+///                 "bb"      POST    => ping,
+///
+///                 "ccc" (mw: mw3) {
+///                     "aa"      POST    => ping |
+///                             GET     => ping |
+///                             DELETE  => ping,
+///                     "bb"      POST    => ping,
+///                 }
+///             }
+///         }
+///
+///         "api" {
+///             "aa"      POST    => ping,
+///         }
+///     );
+///
+///     async fn my_middleware(
+///         req: actix_web::dev::ServiceRequest,
+///         next: actix_web::middleware::Next<impl actix_web::body::MessageBody>,
+///     ) -> Result<actix_web::dev::ServiceResponse<impl actix_web::body::MessageBody>, actix_web::Error>
+///     {
+///         next.call(req).await
+///     }
+///
+///     async fn ping() -> &'static str {
+///         "pong"
+///     }
+/// }
+/// ```
+
+#[macro_export]
+macro_rules! actix_route {
+    (router = $router:expr; $($scope:literal $((mw: $mw:expr))? { $($scope_body:tt)* })*) => {
+        $crate::actix_route!(
+            @scope $router, $($scope $((mw: $mw))? { $($scope_body)* })*
+        )
+    };
+
+    (router = $router:expr; {$($name:literal $($method:ident => $handler:path)|+  ),* $(,)?} $($scope:literal $((mw: $mw:expr))? { $($scope_body:tt)* })*) => {
+        {
+           let router = $crate::attach_resource! {
+                $router,
+                {
+                    $($name $($method => $handler)|+,)*
+                }
+            };
+            $crate::actix_route!(
+                @scope router, $($scope $((mw: $mw))? { $($scope_body)* })*
+            )
+        }
+    };
+
+    (@scope $super_scope:expr, $scope:literal $((mw: $mw:expr))? {$($scope_body:tt)*} $($tt:tt)*) => {
+        $crate::actix_route!(
+            @scope
+            $super_scope.service(
+                $crate::attach_resource!{
+                    actix_web::web::scope($scope),
+                    {
+                        $($scope_body)*
+                    }
+                }  $(.wrap($mw))?
+            ),
+            $($tt)*
+        )
+    };
+
+    (@scope $super_scope:expr $(,)*) => {
+           $super_scope
+    };
+}
+
+#[macro_export]
+macro_rules! attach_resource {
+    ($scope:expr, { $name:literal $($method:ident => $handler:path)|+ , $($scope_tail:tt)* }) => {
+        $crate::attach_resource!{
+            $scope.service($crate::resource!($name $($method => $handler,)+)),
+            {$($scope_tail)*}
+        }
+    };
+
+    ($scope:expr, {$inner_scope:literal $((mw: $mw:expr))? {$($inner_body:tt)*} $($inner_tail:tt)*} ) => {
+        $crate::actix_route!(@scope $scope, $inner_scope $((mw: $mw))? {$($inner_body)*} $($inner_tail)* )
+    };
+
+    ($scope:expr, {$(,)*}) => {
+        $scope
+    };
+}
+
+#[macro_export]
+macro_rules! resource {
+    ($name:literal $($method:ident => $handler:expr,)*) => {
+        $crate::resource!{@method
+            actix_web::web::resource($name),
+            $($method => $handler,)*
+        }
+    };
+
+    (@method $resource:expr, GET => $handler:expr, $($tt:tt)*) => {{
+        $crate::resource!(@method $resource.get($handler), $($tt)*)
+    }};
+
+    (@method $resource:expr, POST => $handler:expr, $($tt:tt)*) => {{
+        $crate::resource!(@method $resource.post($handler), $($tt)*)
+    }};
+
+    (@method $resource:expr, DELETE => $handler:expr, $($tt:tt)*) => {{
+        $crate::resource!(@method $resource.delete($handler), $($tt)*)
+    }};
+
+    (@method $resource:expr, PUT => $handler:expr, $($tt:tt)*) => {{
+        $crate::resource!(@method $resource.put($handler), $($tt)*)
+    }};
+
+    (@method $resource:expr, PATCH => $handler:expr, $($tt:tt)*) => {{
+        $crate::resource!(@method $resource.patch($handler), $($tt)*)
+    }};
+
+    (@method $resource:expr, HEAD => $handler:expr, $($tt:tt)*) => {{
+        $crate::resource!(@method $resource.head($handler), $($tt)*)
+    }};
+
+    (@method $resource:expr, OPTIONS => $handler:expr, $($tt:tt)*) => {{
+        $crate::resource!(@method $resource.options($handler), $($tt)*)
+    }};
+
+    (@method $resource:expr $(,)*) => {{
+        $resource
+    }};
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(dead_code, unreachable_code, unused)]
