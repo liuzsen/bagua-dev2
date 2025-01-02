@@ -347,6 +347,8 @@ impl Entity {
                     type Id<'a> = <#parent_ty as Entity>::Id<'a>;
 
                     type SysId = <#parent_ty as Entity>::SysId;
+
+                    type BizIdFieldEnum = <#parent_ty as Entity>::BizIdFieldEnum;
                 }
             };
         };

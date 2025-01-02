@@ -359,6 +359,14 @@ impl Entity {
         Ident::new(&format!("{}Ident", entity_ident), entity_ident.span())
     }
 
+    fn entity_biz_fields_enum_name(&self) -> Ident {
+        let entity_ident = &self.name;
+        Ident::new(
+            &format!("{}BizFieldEnum", entity_ident),
+            entity_ident.span(),
+        )
+    }
+
     fn id_field(&self) -> &EntityField {
         self.all_fields.get(self.id_field_position).unwrap()
     }
@@ -381,20 +389,46 @@ impl Entity {
         } else {
             let mut variant_idents = vec![Ident::new("SysId", id_field.field_ident().span())];
             let mut variant_types = vec![id_ty];
+            let mut biz_field_names = vec![];
 
             for field in biz_fields.iter() {
                 let field_ty = &field.inner.ty;
-                let field_ident = field.field_ident();
-                let variant_ident = field_ident.to_string().to_case(Case::Pascal);
-                let field_ident = Ident::new(&variant_ident, field_ident.span());
+                let origin_field_ident = field.field_ident();
+                let variant_ident = origin_field_ident.to_string().to_case(Case::Pascal);
+                let field_ident = Ident::new(&variant_ident, origin_field_ident.span());
+
                 variant_idents.push(field_ident);
                 variant_types.push(field_ty);
+                biz_field_names.push(origin_field_ident);
+            }
+
+            let biz_ident_enums_name = self.entity_biz_fields_enum_name();
+            let biz_variant_idents = variant_idents.clone().into_iter().skip(1);
+            let mut filed_name_impl_arms = vec![];
+            for (name, variant) in biz_field_names.iter().zip(variant_idents.iter().skip(1)) {
+                let name = name.to_string();
+                filed_name_impl_arms.push(quote! {
+                    Self:: #variant => #name
+                })
             }
 
             quote! {
                 #[derive(PartialEq, Eq, Clone, Hash, Debug)]
                 pub enum #ident_name <'a> {
                     #(#variant_idents (std::borrow::Cow<'a, #variant_types>)),*
+                }
+
+                #[derive(PartialEq, Eq, Clone, Hash, Debug, Copy)]
+                pub enum #biz_ident_enums_name {
+                    #(#biz_variant_idents),*
+                }
+
+                impl bagua::entity::BizIdFieldEnum for #biz_ident_enums_name {
+                    fn field_name(self) -> &'static str {
+                        match self {
+                            #(#filed_name_impl_arms),*
+                        }
+                    }
                 }
 
                 #(
@@ -418,6 +452,8 @@ impl Entity {
         } else {
             quote! {<'a>}
         };
+
+        let biz_enum_ident = self.entity_biz_fields_enum_name();
         let entity_trait = quote! {
             const _: () = {
                 use bagua::entity::Entity;
@@ -425,6 +461,8 @@ impl Entity {
                     type Id<'a> = #entity_ident #life;
 
                     type SysId = #sys_id_ty;
+
+                    type BizIdFieldEnum = #biz_enum_ident;
                 }
             };
         };
