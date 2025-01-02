@@ -453,7 +453,13 @@ impl Entity {
             quote! {<'a>}
         };
 
-        let biz_enum_ident = self.entity_biz_fields_enum_name();
+        let biz_enum_ident = if self.biz_id_field_positions.is_empty() {
+            quote! {bagua::entity::NoBizIdField}
+        } else {
+            let biz_enum = self.entity_biz_fields_enum_name();
+            quote! {#biz_enum}
+        };
+
         let entity_trait = quote! {
             const _: () = {
                 use bagua::entity::Entity;
