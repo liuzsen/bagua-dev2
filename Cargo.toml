@@ -15,6 +15,8 @@ serde_json = "1.0.133"
 futures = "0.3.31"
 tracing = "0.1.40"
 http = "1"
+async-trait = "0.1.83"
+imply-hack = "0.1.0"
 
 [dependencies.actix-session]
 version = "0.10.1"
@@ -34,11 +36,12 @@ path = "macros"
 
 [dependencies.diesel-async]
 version = "0.5.1"
-features = ["postgres", "deadpool"]
+features = ["deadpool"]
 optional = true
 
 [dependencies.diesel]
 version = "2.2"
+features = ["serde_json"]
 optional = true
 
 [dependencies.tokio]
@@ -53,19 +56,20 @@ optional = true
 [dependencies.derive_more]
 version = "1"
 default-features = false
-optional = true
 features = ["from", "display", "from_str"]
 
 [dev-dependencies]
 indexmap = { version = "2.6.0", features = ["serde"] }
 serde_json = "1"
 tokio = { version = "1.41.1", features = ["full"] }
+diesel-async = { version = "0.5.1", features = ["deadpool", "postgres"] }
 
 [features]
 default = ["diesel", "tokio", "actix-web"]
+diesel-postgres = ["diesel", "diesel/postgres"]
+diesel-mysql = ["diesel", "diesel/mysql"]
 diesel = ["dep:diesel", "dep:diesel-async"]
 tokio = ["dep:tokio"]
 actix-web = ["dep:actix-web", "dep:actix-identity", "dep:actix-session"]
-flake-id = ["flaken", "derive_more"]
+flake-id = ["flaken"]
 flaken = ["dep:flaken"]
-derive_more = ["dep:derive_more"]

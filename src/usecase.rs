@@ -1,4 +1,4 @@
-use crate::{db::transaction::TransactionMaker, provider::Provider, result::BizResult};
+use crate::{db::TxnManager, provider::Provider, result::BizResult};
 
 pub trait UseCase {
     type Params;
@@ -13,7 +13,7 @@ pub trait UseCase {
         params: Self::Params,
     ) -> BizResult<Self::Output, Self::Error>
     where
-        Txn: TransactionMaker,
+        Txn: TxnManager,
     {
         txn.do_transaction(self.execute(params)).await
     }
@@ -39,7 +39,7 @@ where
 
 impl<Tx, UC> UseCase for TxnUseCase<Tx, UC>
 where
-    Tx: TransactionMaker,
+    Tx: TxnManager,
     UC: UseCase,
 {
     type Params = UC::Params;
@@ -58,7 +58,7 @@ where
         params: Self::Params,
     ) -> BizResult<Self::Output, Self::Error>
     where
-        Txn: TransactionMaker,
+        Txn: TxnManager,
     {
         self.uc.execute_in_txn(txn, params).await
     }
@@ -75,7 +75,7 @@ macro_rules! no_transaction {
         where
             Txn: bagua::db::transaction::TransactionMaker,
         {
-            // We don't need to use transaction in this UseCase
+            // There's no need to use transaction in this UseCase
             self.execute(params).await
         }
     };
