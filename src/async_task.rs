@@ -26,7 +26,7 @@ pub mod tokio_impl {
     use super::LocalAsyncTask;
 
     #[derive(Clone)]
-    pub struct TokioLocalTaskRunner {
+    pub struct LocalTaskRunnerTokio {
         sender: tokio::sync::mpsc::UnboundedSender<Box<dyn LocalAsyncTaskBoxed>>,
     }
 
@@ -59,7 +59,7 @@ pub mod tokio_impl {
         }
     }
 
-    impl super::LocalTaskRunner for TokioLocalTaskRunner {
+    impl super::LocalTaskRunner for LocalTaskRunnerTokio {
         fn spawn<T: LocalAsyncTaskBoxed>(&self, task: T) {
             self.sender
                 .send(Box::new(task))
@@ -67,14 +67,14 @@ pub mod tokio_impl {
         }
     }
 
-    impl TokioLocalTaskRunner {
+    impl LocalTaskRunnerTokio {
         pub fn get_or_init() -> anyhow::Result<Self> {
-            static TASK_HANDLE: OnceLock<TokioLocalTaskRunner> = OnceLock::new();
+            static TASK_HANDLE: OnceLock<LocalTaskRunnerTokio> = OnceLock::new();
             Self::get_or_init_with(&TASK_HANDLE)
         }
 
         pub fn get_or_init_with(
-            handler: &'static OnceLock<TokioLocalTaskRunner>,
+            handler: &'static OnceLock<LocalTaskRunnerTokio>,
         ) -> anyhow::Result<Self> {
             if let Some(this) = handler.get() {
                 return Ok(this.clone());
@@ -85,7 +85,7 @@ pub mod tokio_impl {
                 .start_in_new_thread()
                 .context("failed to start TokioLocalTaskExecutor")?;
 
-            let this = handler.get_or_init(|| TokioLocalTaskRunner { sender });
+            let this = handler.get_or_init(|| LocalTaskRunnerTokio { sender });
 
             Ok(this.clone())
         }
@@ -136,7 +136,7 @@ pub mod tokio_impl {
 
         #[tokio::test]
         async fn test_async_task_runner() -> anyhow::Result<()> {
-            let runner = super::TokioLocalTaskRunner::get_or_init()?;
+            let runner = super::LocalTaskRunnerTokio::get_or_init()?;
             let (tx, rx) = oneshot::channel();
             runner.spawn(IncreaseOneTask {
                 count: 1,
