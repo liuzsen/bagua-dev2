@@ -1,5 +1,10 @@
 use std::{borrow::Cow, sync::Arc};
 
+use biz_err::BizError;
+use http::{HeaderMap, HeaderValue, StatusCode, Version};
+
+use crate::usecase::UseCase;
+
 /// This trait will have some breaking changes after actix-web 5.0 is released
 /// See: https://github.com/actix/actix-web/issues/3384
 pub trait HttpRequest {
@@ -505,12 +510,12 @@ pub mod biz_err {
 macro_rules! http_api {
     ($fn_name:ident $(($(_: $extractor_ty:ty)*))?, $Va:ident $(::$Vb:ident)*) => {
         pub async fn $fn_name($($(_: $extractor_ty,)*)? )
-        -> common::http::HttpApiResponse<crate::adapters::api_http::$Va $(::$Vb)*::Response> {
+        -> bagua::http::HttpApiResponse<crate::adapters::api_http::$Va $(::$Vb)*::Response> {
             use crate::infrastructure::types:: $Va $(::$Vb)* ::{Adapter, UseCase};
             use crate::infrastructure::types::TxnManager;
             use bagua::provider::Provider;
             use bagua::usecase::TxnUseCase;
-            use common::http::Adapter as _;
+            use bagua::http::HttpAdapter as _;
 
             type UC = TxnUseCase<TxnManager, UseCase>;
 
@@ -528,12 +533,12 @@ macro_rules! http_api {
 
     ($fn_name:ident $(($(_: $extractor_ty:ty)*))?, $Va:ident $(::$Vb:ident)* : $bound1:ident $(<$generic1:ty>)? $(+ $bounds:ident $(<$generics:ty>)?)*) => {
         pub async fn $fn_name($($(_: $extractor_ty,)*)? req: http_api!(@compose $Va $(::$Vb)*; $bound1 $(<$generic1>)?, $($bounds $(<$generics>)?),*))
-        -> common::http::HttpApiResponse<crate::adapters::api_http::$Va $(::$Vb)*::Response> {
+        -> bagua::http::HttpApiResponse<crate::adapters::api_http::$Va $(::$Vb)*::Response> {
             use crate::infrastructure::types:: $Va $(::$Vb)* ::{Adapter, UseCase};
             use crate::infrastructure::types::TxnManager;
             use bagua::provider::Provider;
             use bagua::usecase::TxnUseCase;
-            use common::http::Adapter as _;
+            use bagua::http::HttpAdapter as _;
 
             type UC = TxnUseCase<TxnManager, UseCase>;
 
@@ -851,5 +856,192 @@ mod tests {
 
         let req: Req = unreachable!();
         all_endpoints(req);
+    }
+}
+
+pub trait HttpAdapter<R, U>
+where
+    U: UseCase,
+{
+    type RequestBody;
+    type ResponseBody;
+
+    fn convert_request(&self, req: R) -> Result<<U as UseCase>::Params, BizError>;
+
+    fn convert_response(&self, output: <U as UseCase>::Output) -> Self::ResponseBody;
+
+    fn convert_error(&self, err: <U as UseCase>::Error) -> BizError;
+
+    async fn run(&mut self, req: R, mut uc: U) -> HttpApiResponse<Self::ResponseBody> {
+        let params = match self.convert_request(req) {
+            Ok(params) => params,
+            Err(e) => return From::from(e),
+        };
+
+        let biz_result = uc.execute(params).await;
+
+        match biz_result {
+            Ok(Ok(output)) => HttpApiResponse::new_ok(self.convert_response(output)),
+            Ok(Err(biz_err)) => {
+                let err = self.convert_error(biz_err);
+                HttpApiResponse::from_biz_err(err)
+            }
+            Err(sys_err) => HttpApiResponse::from_anyhow_err(sys_err),
+        }
+    }
+}
+
+pub struct HttpApiResponse<T> {
+    pub head: Parts,
+    pub body: HttpResponseBody<T>,
+}
+
+pub struct Parts {
+    pub status: StatusCode,
+    pub version: Version,
+    pub headers: HeaderMap<HeaderValue>,
+}
+
+#[derive(serde::Serialize)]
+pub struct HttpResponseBody<T> {
+    pub code: u32,
+    #[serde(flatten)]
+    pub body: DataOrError<T>,
+}
+
+#[derive(serde::Serialize)]
+pub enum DataOrError<T> {
+    #[serde(rename = "data")]
+    Data(T),
+    #[serde(rename = "error")]
+    Error(Cow<'static, str>),
+}
+
+impl<T> HttpApiResponse<T> {
+    pub fn new_ok(body: T) -> Self {
+        Self {
+            head: Parts {
+                status: StatusCode::OK,
+                version: Version::HTTP_2,
+                headers: HeaderMap::new(),
+            },
+            body: HttpResponseBody {
+                code: 0,
+                body: DataOrError::Data(body),
+            },
+        }
+    }
+
+    pub fn from_biz_err(biz_err: BizError) -> Self {
+        Self::from(biz_err)
+    }
+
+    pub fn from_anyhow_err(anyhow_err: anyhow::Error) -> Self {
+        Self::from(anyhow_err)
+    }
+}
+
+impl<T> From<BizError> for HttpApiResponse<T> {
+    fn from(value: BizError) -> Self {
+        Self {
+            head: Parts {
+                status: value.http_status,
+                version: Version::HTTP_2,
+                headers: HeaderMap::new(),
+            },
+            body: HttpResponseBody {
+                code: value.biz_code,
+                body: DataOrError::Error(value.message),
+            },
+        }
+    }
+}
+
+impl<T> From<anyhow::Error> for HttpApiResponse<T> {
+    fn from(value: anyhow::Error) -> Self {
+        Self {
+            head: Parts {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                version: Version::HTTP_2,
+                headers: HeaderMap::new(),
+            },
+            body: HttpResponseBody {
+                code: 1,
+                body: DataOrError::Error(Cow::Owned(format!("{:?}", value))),
+            },
+        }
+    }
+}
+
+#[cfg(feature = "actix-web")]
+mod impl_actix_responder {
+    use std::str::FromStr;
+
+    use actix_web::{web::Json, Responder};
+
+    use super::{HttpApiResponse, HttpResponseBody};
+
+    /// TODO: Remove this helper trait after actix-web 5.0 is released
+    /// See: https://github.com/actix/actix-web/issues/3384
+    trait HttpToLegacy {
+        type Legacy;
+
+        fn to_legacy(self) -> Self::Legacy;
+    }
+
+    impl HttpToLegacy for http::Version {
+        type Legacy = actix_web::http::Version;
+
+        fn to_legacy(self) -> Self::Legacy {
+            if self == http::Version::HTTP_09 {
+                actix_web::http::Version::HTTP_09
+            } else if self == http::Version::HTTP_10 {
+                actix_web::http::Version::HTTP_10
+            } else if self == http::Version::HTTP_11 {
+                actix_web::http::Version::HTTP_11
+            } else if self == http::Version::HTTP_2 {
+                actix_web::http::Version::HTTP_2
+            } else if self == http::Version::HTTP_3 {
+                actix_web::http::Version::HTTP_3
+            } else {
+                unreachable!()
+            }
+        }
+    }
+
+    impl HttpToLegacy for http::StatusCode {
+        type Legacy = actix_web::http::StatusCode;
+
+        fn to_legacy(self) -> Self::Legacy {
+            actix_web::http::StatusCode::from_u16(self.as_u16()).unwrap()
+        }
+    }
+
+    impl<T> Responder for HttpApiResponse<T>
+    where
+        T: serde::Serialize,
+    {
+        type Body = <Json<HttpResponseBody<T>> as Responder>::Body;
+
+        fn respond_to(self, req: &actix_web::HttpRequest) -> actix_web::HttpResponse<Self::Body> {
+            let mut response = Json(self.body).respond_to(req);
+            let resp_headers = response.headers_mut();
+
+            let super::Parts {
+                status,
+                version,
+                headers,
+            } = self.head;
+
+            for (k, v) in headers.iter() {
+                let k = actix_web::http::header::HeaderName::from_str(k.as_str()).unwrap();
+                let v = actix_web::http::header::HeaderValue::from_bytes(v.as_bytes()).unwrap();
+                resp_headers.append(k, v);
+            }
+            response.head_mut().version = version.to_legacy();
+            response.head_mut().status = status.to_legacy();
+
+            response
+        }
     }
 }
