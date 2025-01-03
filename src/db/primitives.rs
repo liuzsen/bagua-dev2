@@ -249,3 +249,7 @@ mod diesel_impl {
         }
     }
 }
+
+pub trait PersistentObject<'a, DO> {
+    fn from_domain_object(do_obj: &'a DO) -> Self;
+}

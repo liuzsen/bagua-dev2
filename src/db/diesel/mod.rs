@@ -120,6 +120,24 @@ pub struct TxnManagerDiesel<A> {
     callbacks: Arc<SyncMutex<Vec<Box<dyn TxCallback>>>>,
 }
 
+impl<A> Provider for TxnManagerDiesel<A>
+where
+    A: Provider + Clone + SingletonProvider,
+{
+    fn build(ctx: &mut crate::provider::ProviderContext) -> anyhow::Result<Self> {
+        if let Some(this) = ctx.get::<Self>() {
+            return Ok(this.clone());
+        }
+
+        let this = Self::new(A::build_single(ctx)?);
+        ctx.insert(this.clone());
+
+        Ok(this)
+    }
+}
+
+impl<A> SingletonProvider for TxnManagerDiesel<A> where A: Provider + Clone + SingletonProvider {}
+
 impl<A> TxnManagerDiesel<A> {
     pub fn new(adapter: A) -> Self {
         Self {
@@ -229,6 +247,33 @@ impl<A> Drop for TxnManagerDiesel<A> {
 pub enum SqlErrorDiesel {
     Anyhow(anyhow::Error),
     Diesel(diesel::result::Error),
+}
+
+impl From<SqlErrorDiesel> for anyhow::Error {
+    fn from(value: SqlErrorDiesel) -> Self {
+        match value {
+            SqlErrorDiesel::Anyhow(error) => error,
+            SqlErrorDiesel::Diesel(error) => From::from(error),
+        }
+    }
+}
+
+impl SqlErrorDiesel {
+    pub fn is_conflict(&self) -> bool {
+        match self {
+            SqlErrorDiesel::Anyhow(_error) => false,
+            SqlErrorDiesel::Diesel(error) => match error {
+                diesel::result::Error::DatabaseError(
+                    database_error_kind,
+                    _database_error_information,
+                ) => match database_error_kind {
+                    diesel::result::DatabaseErrorKind::UniqueViolation => true,
+                    _ => false,
+                },
+                _ => false,
+            },
+        }
+    }
 }
 
 pub trait DieselSqlRunner<DB: Backend> {

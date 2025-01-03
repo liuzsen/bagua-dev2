@@ -73,7 +73,7 @@ macro_rules! no_transaction {
             params: Self::Params,
         ) -> bagua::result::BizResult<Self::Output, Self::Error>
         where
-            Txn: bagua::db::transaction::TransactionMaker,
+            Txn: bagua::db::TxnManager,
         {
             // There's no need to use transaction in this UseCase
             self.execute(params).await

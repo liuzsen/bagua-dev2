@@ -507,12 +507,12 @@ macro_rules! http_api {
         pub async fn $fn_name($($(_: $extractor_ty,)*)? )
         -> common::http::HttpApiResponse<crate::adapters::api_http::$Va $(::$Vb)*::Response> {
             use crate::infrastructure::types:: $Va $(::$Vb)* ::{Adapter, UseCase};
-            use crate::infrastructure::types::TransactionMaker;
+            use crate::infrastructure::types::TxnManager;
             use bagua::provider::Provider;
             use bagua::usecase::TxnUseCase;
             use common::http::Adapter as _;
 
-            type UC = TxnUseCase<TransactionMaker, UseCase>;
+            type UC = TxnUseCase<TxnManager, UseCase>;
 
             let uc = match UC::provide() {
                 Ok(uc) => uc,
@@ -530,12 +530,12 @@ macro_rules! http_api {
         pub async fn $fn_name($($(_: $extractor_ty,)*)? req: http_api!(@compose $Va $(::$Vb)*; $bound1 $(<$generic1>)?, $($bounds $(<$generics>)?),*))
         -> common::http::HttpApiResponse<crate::adapters::api_http::$Va $(::$Vb)*::Response> {
             use crate::infrastructure::types:: $Va $(::$Vb)* ::{Adapter, UseCase};
-            use crate::infrastructure::types::TransactionMaker;
+            use crate::infrastructure::types::TxnManager;
             use bagua::provider::Provider;
             use bagua::usecase::TxnUseCase;
             use common::http::Adapter as _;
 
-            type UC = TxnUseCase<TransactionMaker, UseCase>;
+            type UC = TxnUseCase<TxnManager, UseCase>;
 
             let uc = match UC::provide() {
                 Ok(uc) => uc,
