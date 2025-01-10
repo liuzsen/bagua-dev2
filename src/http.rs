@@ -866,7 +866,7 @@ where
     type RequestBody;
     type ResponseBody;
 
-    fn convert_request(&self, req: R) -> Result<<U as UseCase>::Params, BizError>;
+    fn convert_request(&self, req: R) -> Result<<U as UseCase>::Input, BizError>;
 
     fn convert_response(&self, output: <U as UseCase>::Output) -> Self::ResponseBody;
 

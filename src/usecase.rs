@@ -1,21 +1,21 @@
 use crate::{db::TxnManager, provider::Provider, result::BizResult};
 
 pub trait UseCase {
-    type Params;
+    type Input;
     type Output;
     type Error;
 
-    async fn execute(&mut self, params: Self::Params) -> BizResult<Self::Output, Self::Error>;
+    async fn execute(&mut self, input: Self::Input) -> BizResult<Self::Output, Self::Error>;
 
     async fn execute_in_txn<Txn>(
         &mut self,
         mut txn: Txn,
-        params: Self::Params,
+        input: Self::Input,
     ) -> BizResult<Self::Output, Self::Error>
     where
         Txn: TxnManager,
     {
-        txn.do_transaction(self.execute(params)).await
+        txn.do_transaction(self.execute(input)).await
     }
 }
 
@@ -42,20 +42,20 @@ where
     Tx: TxnManager,
     UC: UseCase,
 {
-    type Params = UC::Params;
+    type Input = UC::Input;
 
     type Output = UC::Output;
 
     type Error = UC::Error;
 
-    async fn execute(&mut self, params: Self::Params) -> BizResult<Self::Output, Self::Error> {
+    async fn execute(&mut self, params: Self::Input) -> BizResult<Self::Output, Self::Error> {
         self.uc.execute_in_txn(self.tx.clone(), params).await
     }
 
     async fn execute_in_txn<Txn>(
         &mut self,
         txn: Txn,
-        params: Self::Params,
+        params: Self::Input,
     ) -> BizResult<Self::Output, Self::Error>
     where
         Txn: TxnManager,
