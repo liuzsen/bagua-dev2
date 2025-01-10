@@ -20,6 +20,7 @@ use crate::provider::{Provider, SingletonProvider};
 
 use super::{DbAdapter, TxCallback, TxnManager, TxnResult, TxnState};
 
+pub mod int_enum;
 pub mod new_type;
 pub mod pg_pool;
 
