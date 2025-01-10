@@ -553,7 +553,6 @@ dependencies = [
  "itoa",
  "mysqlclient-sys",
  "percent-encoding",
- "pq-sys",
  "serde_json",
  "url",
 ]
@@ -1369,15 +1368,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77957b295656769bb8ad2b6a6b09d897d94f05c41b069aede1fcdaa675eaea04"
 dependencies = [
  "zerocopy",
-]
-
-[[package]]
-name = "pq-sys"
-version = "0.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6cc05d7ea95200187117196eee9edd0644424911821aeb28a18ce60ea0b8793"
-dependencies = [
- "vcpkg",
 ]
 
 [[package]]
