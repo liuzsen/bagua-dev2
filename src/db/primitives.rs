@@ -3,145 +3,10 @@ use std::borrow::Cow;
 use ::diesel::expression::AsExpression;
 use serde::{Deserialize, Serialize};
 
-use crate::entity::field::Field;
-
-pub trait DbPrimitive<'a, DP> {
-    fn to_domain_primitive(self) -> anyhow::Result<DP>;
-
-    fn from_domain_primitive(do_obj: &'a DP) -> Self;
-}
-
-macro_rules! impl_db_primitive {
-    ($ty:ty) => {
-        impl<'a> DbPrimitive<'a, $ty> for $ty {
-            fn to_domain_primitive(self) -> anyhow::Result<$ty> {
-                Ok(self)
-            }
-
-            fn from_domain_primitive(do_obj: &'a $ty) -> Self {
-                do_obj.clone()
-            }
-        }
-
-        impl<'a> DbPrimitive<'a, $ty> for &'a $ty {
-            fn to_domain_primitive(self) -> anyhow::Result<$ty> {
-                Ok(self.clone())
-            }
-
-            fn from_domain_primitive(do_obj: &'a $ty) -> Self {
-                do_obj
-            }
-        }
-
-        impl<'a> DbPrimitive<'a, $ty> for std::borrow::Cow<'a, $ty> {
-            fn to_domain_primitive(self) -> anyhow::Result<$ty> {
-                Ok(self.into_owned())
-            }
-
-            fn from_domain_primitive(do_obj: &'a $ty) -> Self {
-                std::borrow::Cow::Borrowed(do_obj)
-            }
-        }
-    };
-}
-
-impl_db_primitive!(String);
-impl_db_primitive!(bool);
-impl_db_primitive!(i8);
-impl_db_primitive!(i16);
-impl_db_primitive!(i32);
-impl_db_primitive!(i64);
-impl_db_primitive!(u8);
-impl_db_primitive!(u16);
-impl_db_primitive!(u32);
-impl_db_primitive!(u64);
-impl_db_primitive!(f32);
-impl_db_primitive!(f64);
-
-impl<'a> DbPrimitive<'a, String> for Cow<'a, str> {
-    fn to_domain_primitive(self) -> anyhow::Result<String> {
-        Ok(self.to_string())
-    }
-
-    fn from_domain_primitive(do_obj: &'a String) -> Self {
-        std::borrow::Cow::Borrowed(do_obj)
-    }
-}
-
-impl<'a> DbPrimitive<'a, String> for &'a str {
-    fn to_domain_primitive(self) -> anyhow::Result<String> {
-        Ok(self.to_string())
-    }
-
-    fn from_domain_primitive(do_obj: &'a String) -> Self {
-        do_obj
-    }
-}
-
-impl<T> Field<T> {
-    pub fn to_db_primitive<'a, P>(&'a self) -> P
-    where
-        P: DbPrimitive<'a, T>,
-    {
-        let v_ref = self.value_ref();
-        DbPrimitive::from_domain_primitive(v_ref)
-    }
-
-    pub fn to_db_primitive_update<'a, P>(&'a self) -> Option<P>
-    where
-        P: DbPrimitive<'a, T>,
-    {
-        match self {
-            Field::Unloaded => None,
-            Field::Unchanged(_) => None,
-            Field::Set(v) => Some(DbPrimitive::from_domain_primitive(v)),
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, AsExpression)]
 #[diesel(sql_type = ::diesel::sql_types::Json)]
 #[diesel(sql_type = ::diesel::sql_types::Jsonb)]
 pub struct JsonProxy<T>(pub T);
-
-impl<'a, T> DbPrimitive<'a, T> for JsonProxy<T>
-where
-    T: Clone,
-{
-    fn to_domain_primitive(self) -> anyhow::Result<T> {
-        Ok(self.0)
-    }
-
-    fn from_domain_primitive(do_obj: &'a T) -> Self {
-        JsonProxy(do_obj.clone())
-    }
-}
-
-impl<'a, T> DbPrimitive<'a, T> for JsonProxy<&'a T>
-where
-    T: Clone,
-{
-    fn to_domain_primitive(self) -> anyhow::Result<T> {
-        Ok(self.0.clone())
-    }
-
-    fn from_domain_primitive(do_obj: &'a T) -> Self {
-        JsonProxy(do_obj)
-    }
-}
-
-impl<'a, T> DbPrimitive<'a, T> for JsonProxy<Cow<'a, T>>
-where
-    T: Clone,
-{
-    fn to_domain_primitive(self) -> anyhow::Result<T> {
-        Ok(self.0.into_owned())
-    }
-
-    fn from_domain_primitive(do_obj: &'a T) -> Self {
-        JsonProxy(std::borrow::Cow::Borrowed(do_obj))
-    }
-}
 
 #[cfg(feature = "diesel")]
 mod diesel_impl {
@@ -252,4 +117,41 @@ mod diesel_impl {
 
 pub trait PersistentObject<'a, DO> {
     fn from_domain_object(do_obj: &'a DO) -> Self;
+}
+
+pub trait ToDbPrimitive<'a, T> {
+    fn to_db_primitive(&'a self) -> T;
+}
+
+pub trait ToDomainPremitive<T> {
+    fn to_domain_primitive(self) -> T;
+}
+
+impl<T> ToDomainPremitive<T> for T {
+    fn to_domain_primitive(self) -> T {
+        self
+    }
+}
+
+impl<'a, T> ToDbPrimitive<'a, &'a T> for T {
+    fn to_db_primitive(&'a self) -> &'a T {
+        self
+    }
+}
+
+impl<'a, T> ToDbPrimitive<'a, Cow<'a, T>> for T
+where
+    T: ToOwned,
+{
+    fn to_db_primitive(&'a self) -> Cow<'a, T> {
+        Cow::Borrowed(self)
+    }
+}
+
+pub trait ConvertInnerType: Sized {
+    type InnerType;
+
+    fn get_inner(&self) -> &Self::InnerType;
+
+    fn from_inner(s: Self::InnerType) -> Result<Self, String>;
 }

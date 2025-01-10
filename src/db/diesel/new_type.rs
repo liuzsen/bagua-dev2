@@ -1,15 +1,21 @@
 #[macro_export]
 macro_rules! impl_diesel_sql_type {
     ($vis:vis struct $name:ident ($vis_inenr:vis $inner:ty) $(;)?) => {
-        $crate::impl_diesel_sql_type!(@gen $name, $inner, 0);
+        $crate::impl_diesel_sql_type!(@gen $name, $inner);
     };
 
     ($vis:vis struct $name:ident { $vis_inner:vis $field:ident: $field_type:ty  $(,)? }) => {
-        $crate::impl_diesel_sql_type!(@gen $name, $inner, $field_name);
+        $crate::impl_diesel_sql_type!(@gen $name, $inner);
     };
 
-    (@gen $name:path, $inner:ty, $field_name:tt) => {
+    (@gen $name:path, $inner:ty) => {
         const _: () = {
+            use bagua::db::primitives::ConvertInnerType;
+
+            const fn type_test<T: ConvertInnerType<InnerType = $inner>>() {}
+
+            type_test::<$name>();
+
             impl<ST, DB> diesel::serialize::ToSql<ST, DB> for $name
             where
                 $inner: diesel::serialize::ToSql<ST, DB>,
@@ -20,7 +26,7 @@ macro_rules! impl_diesel_sql_type {
                     &'b self,
                     out: &mut diesel::serialize::Output<'b, '_, DB>,
                 ) -> diesel::serialize::Result {
-                    self.$field_name.to_sql(out)
+                    self.get_inner().to_sql(out)
                 }
             }
 
@@ -67,7 +73,8 @@ macro_rules! impl_diesel_sql_type {
                     raw: DB::RawValue<'_>,
                 ) -> ::std::result::Result<Self, Box<dyn ::std::error::Error + Send + Sync>>
                 {
-                    diesel::deserialize::FromSql::<ST, DB>::from_sql(raw).map($name)
+                    let inner = diesel::deserialize::FromSql::<ST, DB>::from_sql(raw)?;
+                    Self::from_inner(inner).map_err(|e| From::from(e))
                 }
             }
             impl<ST, DB> diesel::deserialize::Queryable<ST, DB> for $name
@@ -78,7 +85,7 @@ macro_rules! impl_diesel_sql_type {
             {
                 type Row = $inner;
                 fn build(row: Self::Row) -> diesel::deserialize::Result<Self> {
-                    Ok($name(row))
+                    Self::from_inner(row).map_err(|e| From::from(e))
                 }
             }
             impl diesel::query_builder::QueryId for $name {
