@@ -148,7 +148,7 @@ where
     }
 }
 
-pub trait ConvertInnerType: Sized {
+pub trait WrapperType: Sized {
     type InnerType;
 
     fn get_inner(&self) -> &Self::InnerType;

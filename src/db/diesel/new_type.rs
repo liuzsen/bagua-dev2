@@ -10,9 +10,9 @@ macro_rules! impl_diesel_sql_type {
 
     (@gen $name:path, $inner:ty) => {
         const _: () = {
-            use bagua::db::primitives::ConvertInnerType;
+            use bagua::db::primitives::WrapperType;
 
-            const fn type_test<T: ConvertInnerType<InnerType = $inner>>() {}
+            const fn type_test<T: WrapperType<InnerType = $inner>>() {}
 
             type_test::<$name>();
 
