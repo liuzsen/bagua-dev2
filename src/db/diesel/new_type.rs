@@ -1,11 +1,11 @@
 #[macro_export]
-macro_rules! impl_diesel_sql_type {
+macro_rules! diesel_sql_type_wrapper {
     ($vis:vis struct $name:ident ($vis_inenr:vis $inner:ty) $(;)?) => {
-        $crate::impl_diesel_sql_type!(@gen $name, $inner);
+        $crate::diesel_sql_type_wrapper!(@gen $name, $inner);
     };
 
     ($vis:vis struct $name:ident { $vis_inner:vis $field:ident: $field_type:ty  $(,)? }) => {
-        $crate::impl_diesel_sql_type!(@gen $name, $inner);
+        $crate::diesel_sql_type_wrapper!(@gen $name, $inner);
     };
 
     (@gen $name:path, $inner:ty) => {
