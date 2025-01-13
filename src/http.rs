@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::borrow::Cow;
 
 use biz_err::BizError;
 use http::{HeaderMap, HeaderValue, StatusCode, Version};
@@ -27,14 +27,12 @@ pub trait HttpJsonQuery<T> {
     fn get_query(self) -> T;
 }
 
-pub trait HttpCredential {
-    type Credential;
-
-    fn credential(&self) -> Self::Credential;
+pub trait HttpCredential<T> {
+    fn credential(&self) -> T;
 }
 
 pub struct IdCredential<T> {
-    pub id: Arc<T>,
+    pub id: T,
 }
 
 pub struct HttpRequestCompose<A, B> {
@@ -102,13 +100,11 @@ where
     }
 }
 
-impl<A, B> HttpCredential for HttpCredentialCompose<A, B>
+impl<A, B, C> HttpCredential<C> for HttpCredentialCompose<A, B>
 where
-    A: HttpCredential,
+    A: HttpCredential<C>,
 {
-    type Credential = A::Credential;
-
-    fn credential(&self) -> Self::Credential {
+    fn credential(&self) -> C {
         self.this.credential()
     }
 }
@@ -170,13 +166,11 @@ macro_rules! impl_http_json_query_for_that {
 
 macro_rules! impl_credential_for_that {
     ($compose:ident) => {
-        impl<A, B> HttpCredential for $compose<A, B>
+        impl<A, B, C> HttpCredential<C> for $compose<A, B>
         where
-            B: HttpCredential,
+            B: HttpCredential<C>,
         {
-            type Credential = B::Credential;
-
-            fn credential(&self) -> Self::Credential {
+            fn credential(&self) -> C {
                 self.that.credential()
             }
         }
@@ -201,14 +195,14 @@ impl_http_json_query_for_that!(HttpCredentialCompose);
 
 #[cfg(feature = "actix-web")]
 pub mod actix_web_impl {
-    use std::{borrow::Cow, convert::Infallible, str::FromStr, sync::Arc};
+    use std::{borrow::Cow, convert::Infallible, str::FromStr};
 
     use actix_web::FromRequest;
     use futures::{future::LocalBoxFuture, FutureExt};
 
     use super::{
         ComposeNil, HttpCredential, HttpCredentialCompose, HttpJsonBody, HttpJsonBodyCompose,
-        HttpJsonQuery, HttpJsonQueryCompose, HttpRequest, HttpRequestCompose,
+        HttpJsonQuery, HttpJsonQueryCompose, HttpRequest, HttpRequestCompose, IdCredential,
     };
 
     pub type HttpRequestImpl = actix_web::HttpRequest;
@@ -328,7 +322,7 @@ pub mod actix_web_impl {
     }
 
     pub struct ActixIdentityCredential<T> {
-        id: Arc<T>,
+        id: T,
     }
 
     impl<T> ActixIdentityCredential<T>
@@ -354,7 +348,7 @@ pub mod actix_web_impl {
                 }
             };
 
-            Ok(Self { id: Arc::new(id) })
+            Ok(Self { id })
         }
     }
 
@@ -383,11 +377,12 @@ pub mod actix_web_impl {
         }
     }
 
-    impl<T> HttpCredential for ActixIdentityCredential<T> {
-        type Credential = super::IdCredential<T>;
-
-        fn credential(&self) -> Self::Credential {
-            super::IdCredential {
+    impl<T> HttpCredential<IdCredential<T>> for ActixIdentityCredential<T>
+    where
+        T: Clone,
+    {
+        fn credential(&self) -> IdCredential<T> {
+            IdCredential {
                 id: self.id.clone(),
             }
         }
@@ -601,7 +596,7 @@ macro_rules! http_api {
     };
 
     (@compose $Va:ident $(::$Vb:ident)*;  $bound1:ident $(<$generic:ty>)?, $($bounds:ident $(<$generics:ty>)?),* $(,)*) => {
-        paste::paste! {
+        bagua::paste::paste! {
             bagua::http::[<$bound1 Compose>]<
                 crate::infrastructure::types::$bound1 $(<$generic>)?,
                 http_api!(@compose $Va $(::$Vb)*; $($bounds $(<$generics>)?),* ,),
@@ -813,10 +808,8 @@ mod tests {
 
     struct HttpCredentialImpl {}
 
-    impl HttpCredential for HttpCredentialImpl {
-        type Credential = IdCredential<String>;
-
-        fn credential(&self) -> Self::Credential {
+    impl HttpCredential<IdCredential<String>> for HttpCredentialImpl {
+        fn credential(&self) -> IdCredential<String> {
             unreachable!()
         }
     }
@@ -837,7 +830,10 @@ mod tests {
 
     fn all_endpoints<R>(req: R)
     where
-        R: HttpRequest + HttpJsonBody<u32> + HttpJsonQuery<u32> + HttpCredential,
+        R: HttpRequest
+            + HttpJsonBody<u32>
+            + HttpJsonQuery<u32>
+            + HttpCredential<IdCredential<String>>,
     {
         unreachable!()
     }

@@ -21,3 +21,5 @@ pub extern crate derive_more;
 
 #[cfg(feature = "flake-id")]
 pub extern crate flaken;
+
+pub extern crate paste;

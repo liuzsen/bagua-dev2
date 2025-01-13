@@ -307,6 +307,7 @@ dependencies = [
  "imply-hack",
  "indexmap",
  "macros",
+ "paste",
  "replace_with",
  "serde",
  "serde_json",
