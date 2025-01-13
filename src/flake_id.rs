@@ -25,6 +25,12 @@ macro_rules! flake_id {
                 Self::generate()
             }
         }
+
+        impl $type_name {
+            pub fn from_str(s: &str) -> Result<Self, std::num::ParseIntError> {
+                Ok(Self(s.parse()?))
+            }
+        }
     };
 
     (@id_func $type_name:ident, node = $node:expr, $($tt:tt)*) => {
