@@ -597,7 +597,7 @@ macro_rules! http_api {
 
     (@compose $Va:ident $(::$Vb:ident)*;  $bound1:ident $(<$generic:ty>)?, $($bounds:ident $(<$generics:ty>)?),* $(,)*) => {
         bagua::paste::paste! {
-            bagua::http::[<$bound1 Compose>]<
+            [<$bound1 Compose>]<
                 crate::infrastructure::types::$bound1 $(<$generic>)?,
                 http_api!(@compose $Va $(::$Vb)*; $($bounds $(<$generics>)?),* ,),
             >
