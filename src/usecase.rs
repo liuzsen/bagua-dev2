@@ -70,7 +70,7 @@ macro_rules! no_transaction {
         async fn execute_in_txn<Txn>(
             &mut self,
             _txn: Txn,
-            params: Self::Params,
+            params: Self::Input,
         ) -> bagua::result::BizResult<Self::Output, Self::Error>
         where
             Txn: bagua::db::TxnManager,
