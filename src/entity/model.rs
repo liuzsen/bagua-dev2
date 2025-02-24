@@ -1,6 +1,6 @@
-use super::{Entity, GuardedStruct, SysId};
+use super::{Entity, FieldGroup, SysId};
 
-pub trait Model {
+pub trait Model: Sized {
     type Entity: Entity;
 
     fn build_entity(self) -> Self::Entity
@@ -8,14 +8,8 @@ pub trait Model {
         <Self::Entity as Entity>::SysId: SysId;
 }
 
-pub trait ModelWithId {
-    type Entity: Entity;
+pub trait FieldGroupModel {
+    type FieldGroup: FieldGroup;
 
-    fn build_entity(self, id: <Self::Entity as Entity>::SysId) -> Self::Entity;
-}
-
-pub trait GuardedModel {
-    type GuardedStruct: GuardedStruct;
-
-    fn build_entity(self) -> Self::GuardedStruct;
+    fn build_entity(self) -> Self::FieldGroup;
 }

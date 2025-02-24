@@ -66,7 +66,7 @@ tokio = { version = "1.41.1", features = ["full"] }
 diesel-async = { version = "0.5.1", features = ["deadpool", "postgres"] }
 
 [features]
-default = ["diesel", "tokio", "actix-web"]
+default = ["diesel-postgres", "tokio", "actix-web"]
 diesel-postgres = ["diesel", "diesel-async/postgres"]
 diesel-mysql = ["diesel", "diesel/mysql"]
 diesel = ["dep:diesel", "dep:diesel-async"]

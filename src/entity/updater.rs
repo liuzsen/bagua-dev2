@@ -1,9 +1,9 @@
 use serde::Deserialize;
 
-use super::GuardedStruct;
+use super::FieldGroup;
 
 pub trait Updater {
-    type GuardedStruct: GuardedStruct;
+    type FieldGroup: FieldGroup;
 }
 
 pub fn de_double_option<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>

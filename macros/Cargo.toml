@@ -23,3 +23,4 @@ bagua = { path = "..", package = "bagua-dev" }
 anyhow = "1"
 linkme = "0.3.31"
 tokio = { version = "1.41.1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }

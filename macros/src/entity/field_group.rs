@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use convert_case::{Case, Casing};
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned, ToTokens};
@@ -21,7 +19,6 @@ pub struct Entity {
     subsets: Vec<Subset>,
 
     all_fields: Vec<EntityField>,
-    biz_id_field_positions: Vec<usize>,
 }
 
 impl Parse for Entity {
@@ -52,21 +49,7 @@ impl Parse for Entity {
                 "expected at least one named field",
             ));
         }
-        let id_field = fields.get(0).unwrap();
-        if id_field.kind != FieldKind::SysId {
-            return Err(syn::Error::new_spanned(
-                id_field.origin.ident.as_ref().unwrap(),
-                "expected id field to be the first field",
-            ));
-        }
 
-        let mut biz_id_positions = vec![];
-        for (index, field) in fields.iter().enumerate() {
-            match field.kind {
-                FieldKind::BizId => biz_id_positions.push(index),
-                _ => {}
-            }
-        }
         let mut subsets = vec![];
         let mut original_attrs = vec![];
         let mut model_attrs = vec![];
@@ -107,7 +90,6 @@ impl Parse for Entity {
             model_attrs,
             entity_attrs,
             updater_attrs,
-            biz_id_field_positions: biz_id_positions,
         };
 
         Ok(this)
@@ -143,16 +125,18 @@ struct SubsetField {
     ty: syn::Type,
     attrs: Vec<syn::Attribute>,
     is_manual_ty: bool,
-    kind: FieldKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum FieldKind {
-    SysId,
-    BizId,
     Scalar,
     Foreign,
     Group,
+}
+impl FieldKind {
+    fn is_group(&self) -> bool {
+        matches!(self, FieldKind::Group)
+    }
 }
 
 impl Entity {
@@ -169,7 +153,7 @@ impl Entity {
     fn expand_model(&self) -> syn::Result<TokenStream> {
         let entity_name = &self.name;
         let model_name = self.model_name();
-        let model_fields = self.all_fields.iter().skip(1).map(|f| f.to_model_field());
+        let model_fields = self.all_fields.iter().map(|f| f.to_model_field());
 
         let field_inits = self.all_fields.iter().map(|f| f.model_to_entity());
         let field_names = self.all_fields.iter().map(|f| f.ident());
@@ -186,24 +170,11 @@ impl Entity {
             }
 
             const _: () = {
-                use bagua::entity::model::Model;
-                use bagua::entity::Entity;
-
                 impl #model_name {
                     fn build_entity(self) -> #entity_name {
                         #entity_name {
                             #(#field_names: #field_inits)*
                         }
-                    }
-                }
-
-                impl Model for #model_name {
-                    type Entity = #entity_name;
-
-                    fn build_entity(self) -> Self::Entity
-                    where
-                        <Self::Entity as Entity>::SysId: SysId {
-                        self.build_entity()
                     }
                 }
             };
@@ -279,19 +250,6 @@ impl Entity {
         })
     }
 
-    fn ident_struct_name(&self) -> Ident {
-        let entity_ident = &self.name;
-        Ident::new(&format!("{}Ident", entity_ident), entity_ident.span())
-    }
-
-    fn entity_biz_fields_enum_name(&self) -> Ident {
-        let entity_ident = &self.name;
-        Ident::new(
-            &format!("{}BizFieldEnum", entity_ident),
-            entity_ident.span(),
-        )
-    }
-
     fn impl_deref(&self, read_only_ident: &Ident) -> TokenStream {
         let name = &self.name;
         quote! {
@@ -305,128 +263,6 @@ impl Entity {
                 }
             }
         }
-    }
-
-    fn entity_ident_stream(&self) -> TokenStream {
-        let id_field = self.all_fields.get(0).unwrap();
-        let id_ty = &id_field.origin.ty;
-        let biz_fields = self
-            .all_fields
-            .iter()
-            .filter_map(|field| {
-                if field.kind == FieldKind::BizId {
-                    Some(field)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let ident_name = self.ident_struct_name();
-
-        if biz_fields.is_empty() {
-            return quote! {
-                pub type #ident_name = #id_ty;
-            };
-        }
-
-        let mut variant_idents = vec![Ident::new("SysId", id_field.ident().span())];
-        let mut variant_types = vec![Cow::Borrowed(id_ty)];
-        let mut biz_field_names = vec![];
-
-        for field in biz_fields.iter() {
-            let field_ty = &field.origin.ty;
-            let origin_field_ident = field.origin.ident.as_ref().unwrap();
-            let variant_ident = origin_field_ident.to_string().to_case(Case::Pascal);
-            let field_ident = Ident::new(&variant_ident, origin_field_ident.span());
-
-            variant_idents.push(field_ident);
-            variant_types.push(strip_optional(field_ty));
-            biz_field_names.push(origin_field_ident);
-        }
-
-        let biz_ident_enums_name = self.entity_biz_fields_enum_name();
-        let biz_variant_idents = variant_idents.clone().into_iter().skip(1);
-        let mut filed_name_impl_arms = vec![];
-        for (name, variant) in biz_field_names.iter().zip(variant_idents.iter().skip(1)) {
-            let name = name.to_string();
-            filed_name_impl_arms.push(quote! {
-                Self:: #variant => #name
-            })
-        }
-
-        quote! {
-            #[derive(PartialEq, Eq, Clone, Hash, Debug)]
-            pub enum #ident_name <'a> {
-                #(#variant_idents (std::borrow::Cow<'a, #variant_types>)),*
-            }
-
-            #[derive(PartialEq, Eq, Clone, Hash, Debug, Copy)]
-            pub enum #biz_ident_enums_name {
-                #(#biz_variant_idents),*
-            }
-
-            impl bagua::entity::BizIdFieldEnum for #biz_ident_enums_name {
-                fn field_name(self) -> &'static str {
-                    match self {
-                        #(#filed_name_impl_arms),*
-                    }
-                }
-            }
-
-            #(
-                impl From<#variant_types> for #ident_name <'_> {
-                    fn from(value: #variant_types) -> Self {
-                        Self:: #variant_idents (std::borrow::Cow::Owned(value))
-                    }
-                }
-            )*
-
-            #(
-                impl<'a> From<&'a #variant_types> for #ident_name<'a> {
-                    fn from(value: &'a #variant_types) -> Self {
-                        Self:: #variant_idents (std::borrow::Cow::Borrowed(value))
-                    }
-                }
-            )*
-
-        }
-    }
-
-    fn id_field(&self) -> &EntityField {
-        self.all_fields.get(0).unwrap()
-    }
-
-    fn impl_entity_trait(&self) -> TokenStream {
-        let entity_name = &self.name;
-        let ident_struct_name = self.ident_struct_name();
-        let sys_id_ty = self.id_field().origin_ty();
-        let life = if self.biz_id_field_positions.is_empty() {
-            quote! {}
-        } else {
-            quote! {<'a>}
-        };
-
-        let biz_enum_ident = if self.biz_id_field_positions.is_empty() {
-            quote! {bagua::entity::NoBizIdField}
-        } else {
-            let biz_enum = self.entity_biz_fields_enum_name();
-            quote! {#biz_enum}
-        };
-
-        let entity_trait = quote! {
-            const _: () = {
-                use bagua::entity::Entity;
-                impl Entity for #entity_name {
-                    type Id<'a> = #ident_struct_name #life;
-
-                    type SysId = #sys_id_ty;
-
-                    type BizIdFieldEnum = #biz_enum_ident;
-                }
-            };
-        };
-        entity_trait
     }
 
     fn impl_field_group(&self) -> TokenStream {
@@ -462,10 +298,9 @@ impl Entity {
         let entity_repr = self.entity_repr();
         let read_only_struct = self.read_only_struct(fields.clone(), &entity_repr)?;
         let read_only_ident = &read_only_struct.name;
-        let entity_ident_stream = self.entity_ident_stream();
         let impl_deref = self.impl_deref(read_only_ident);
-        let impl_entity_trait = self.impl_entity_trait();
         let impl_field_group = self.impl_field_group();
+        let impl_unloaded = self.impl_unloaded();
 
         let stream = quote_spanned! { self.name.span() =>
             #(#attrs)*
@@ -474,10 +309,6 @@ impl Entity {
             pub struct #entity_ident {
                 #fields
             }
-
-            #entity_ident_stream
-
-            #impl_entity_trait
 
             #impl_field_group
 
@@ -490,34 +321,17 @@ impl Entity {
                     ::core::ops::Deref::deref(self)
                 }
             }
+
+            #impl_unloaded
         };
         Ok(stream)
     }
 
     fn subset_full_ident(&self) -> Ident {
-        subset_full_ident(&self.name)
+        crate::entity::entity::subset_full_ident(&self.name)
     }
 
     fn default_subsets(&self) -> Vec<Subset> {
-        let id_field = self.all_fields.get(0).unwrap();
-        let unused_fields = self
-            .all_fields
-            .iter()
-            .filter(|f| f.kind != FieldKind::SysId)
-            .map(|f| f.origin.clone())
-            .collect::<Vec<_>>();
-
-        let mini = Subset {
-            name: Ident::new(&format!("{}Mini", self.name), self.name.span()),
-            fields: vec![SubsetField {
-                ident: id_field.ident().clone(),
-                ty: id_field.origin.ty.clone(),
-                attrs: id_field.origin.attrs.clone(),
-                is_manual_ty: false,
-                kind: FieldKind::SysId,
-            }],
-            unused_fields,
-        };
         let full = Subset {
             name: self.subset_full_ident(),
             fields: self
@@ -528,7 +342,34 @@ impl Entity {
             unused_fields: vec![],
         };
 
-        vec![mini, full]
+        vec![full]
+    }
+
+    fn impl_unloaded(&self) -> TokenStream {
+        let entity_name = &self.name;
+        let fields = self
+            .all_fields
+            .iter()
+            .map(|f| {
+                let field = f.to_guarded_field();
+                let ident = &field.ident;
+                quote! {
+                    #ident: ::bagua::entity::field::Unloaded::unloaded(),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        quote! {
+            const _: () = {
+                impl bagua::entity::field::Unloaded for #entity_name {
+                    fn unloaded() -> Self {
+                        #entity_name {
+                            #(#fields)*
+                        }
+                    }
+                }
+            };
+        }
     }
 
     fn expand_subsets(&self) -> syn::Result<TokenStream> {
@@ -538,11 +379,8 @@ impl Entity {
 
         for subset in self.subsets.iter().chain(self.default_subsets().iter()) {
             let name = &subset.name;
-            let subset_fields: Fields = subset
-                .fields
-                .iter()
-                .map(|field| field.to_syn_field())
-                .collect();
+            let subset_fields: Fields =
+                subset.fields.iter().map(|field| field.to_field()).collect();
 
             let to_entity_fields = subset.fields.iter().map(|field| {
                     let ident = &field.ident;
@@ -574,10 +412,8 @@ impl Entity {
                     #subset_fields,
                 }
 
-                impl ::bagua::entity::subset::Subset for #name {
-                    type Entity = #entity_name;
-
-                    fn to_entity(self) -> Self::Entity {
+                impl #name {
+                    fn to_entity(self) -> #entity_name {
                         #entity_name {
                             #(#to_entity_fields)*
                             #(#unused_fields)*
@@ -587,7 +423,13 @@ impl Entity {
 
                 impl From<#name> for #entity_name {
                     fn from(subset: #name) -> Self {
-                        ::bagua::entity::subset::Subset::to_entity(subset)
+                        subset.to_entity()
+                    }
+                }
+
+                impl bagua::entity::field::Unchanged<#entity_name> for #name {
+                    fn unchanged(self) -> #entity_name {
+                        self.to_entity()
                     }
                 }
             };
@@ -634,7 +476,7 @@ impl EntityField {
 
         let ty = &field.ty;
         match self.kind {
-            FieldKind::Scalar | FieldKind::BizId => {
+            FieldKind::Scalar => {
                 let guarded_ty = parse_quote!(bagua::entity::field::Field::<#ty>);
                 field.ty = guarded_ty;
             }
@@ -642,26 +484,29 @@ impl EntityField {
                 let guarded_ty = parse_quote!(bagua::entity::foreign::ForeignEntities::<#ty>);
                 field.ty = guarded_ty;
             }
-            FieldKind::SysId => {}
-            FieldKind::Group => {}
+            FieldKind::Group => {
+                let guarded_ty = parse_quote!(bagua::entity::flatten::FlattenStruct::<#ty>);
+                field.ty = guarded_ty;
+            }
         }
 
         field
     }
 
     fn to_subset_field(&self) -> SubsetField {
-        let ty = self.ty().clone();
+        let ty = match self.kind {
+            FieldKind::Group => {
+                let ty = self.ty().clone();
+                parse_quote!(<#ty as bagua::entity::FieldGroup>::SubsetFull)
+            }
+            _ => self.ty().clone(),
+        };
         SubsetField {
             ident: self.ident().clone(),
             ty,
             attrs: self.origin.attrs.clone(),
             is_manual_ty: false,
-            kind: self.kind,
         }
-    }
-
-    fn origin_ty(&self) -> &syn::Type {
-        &self.origin.ty
     }
 
     /// Generate a model field for this entity field.
@@ -676,8 +521,6 @@ impl EntityField {
         field.vis = syn::Visibility::Public(Token![pub](span));
 
         match self.kind {
-            FieldKind::SysId => panic!("cannot generate model field for id"),
-            FieldKind::BizId => {}
             FieldKind::Scalar => {}
             FieldKind::Foreign => {}
             FieldKind::Group => match &mut field.ty {
@@ -695,16 +538,10 @@ impl EntityField {
 
     fn model_to_entity(&self) -> TokenStream {
         let ident = self.ident();
-        let ty = &self.origin.ty;
         match self.kind {
-            FieldKind::SysId => {
-                quote! {
-                    <#ty>::generate(),
-                }
-            }
             FieldKind::Group => {
                 quote! {
-                    self.#ident.build_entity(),
+                     bagua::entity::field::Reset::reset(self.#ident.build_entity()),
                 }
             }
             _ => {
@@ -791,16 +628,6 @@ impl EntityField {
 
                 fields
             }
-            FieldKind::BizId => {
-                let field = UpdaterField {
-                    field,
-                    role: UpdaterFieldKind::BizId,
-                };
-                vec![field]
-            }
-            FieldKind::SysId => {
-                vec![]
-            }
             FieldKind::Group => {
                 let mut field = field;
                 let mut ty = inner.ty.clone();
@@ -837,14 +664,13 @@ enum UpdaterFieldKind {
     ForeignAdd(Ident),
     ForeignRemove(Ident),
     Group,
-    BizId,
 }
 
 impl UpdaterField {
     fn update_statement(&self) -> TokenStream {
         let field_name = &self.field.ident;
         match &self.role {
-            UpdaterFieldKind::Scalar | UpdaterFieldKind::Foreign | UpdaterFieldKind::BizId => {
+            UpdaterFieldKind::Scalar | UpdaterFieldKind::Foreign => {
                 quote! {
                     self.#field_name.update_value(updater.#field_name);
                 }
@@ -907,52 +733,15 @@ impl ToTokens for ReadOnlyEntity {
     }
 }
 
-fn strip_optional(ty: &syn::Type) -> Cow<syn::Type> {
-    if let syn::Type::Path(p) = ty {
-        if p.path.segments.len() != 1 {
-            return Cow::Borrowed(ty);
-        }
-
-        let ty = &p.path.segments[0];
-        if ty.ident == "Option" {
-            let mut inner = ty.arguments.clone();
-            match &mut inner {
-                syn::PathArguments::AngleBracketed(angle_bracketed_generic_arguments) => {
-                    let args = angle_bracketed_generic_arguments
-                        .args
-                        .pop()
-                        .unwrap()
-                        .into_value();
-                    if let syn::GenericArgument::Type(syn::Type::Path(p)) = args {
-                        return Cow::Owned(syn::Type::Path(p.clone()));
-                    };
-                }
-                _ => {}
-            }
-        }
-    }
-
-    Cow::Borrowed(ty)
-}
-
 impl SubsetField {
-    fn to_syn_field(&self) -> Field {
-        let ty = &self.ty;
-        let ty = match self.kind {
-            FieldKind::Group => {
-                parse_quote!(
-                    <#ty as bagua::entity::FieldGroup>::SubsetFull
-                )
-            }
-            _ => self.ty.clone(),
-        };
+    fn to_field(&self) -> Field {
         Field {
             attrs: self.attrs.clone(),
             vis: pub_vis(),
             mutability: syn::FieldMutability::None,
             ident: Some(self.ident.clone()),
             colon_token: Some(Colon::default()),
-            ty,
+            ty: self.ty.clone(),
         }
     }
 }
@@ -991,22 +780,12 @@ fn parse_entity_filed(mut field: Field) -> syn::Result<EntityField> {
         }
     }
     let mut no_update = false;
-    let mut field_role = if field.ident.as_ref().unwrap() == "id" {
-        FieldKind::SysId
-    } else {
-        FieldKind::Scalar
-    };
+    let mut field_role = FieldKind::Scalar;
     for attr in filed_attrs {
         match attr {
             FieldAttr::Mark(mark) => match &*mark.to_string() {
                 "foreign" => {
                     field_role = FieldKind::Foreign;
-                }
-                "id" => {
-                    field_role = FieldKind::SysId;
-                }
-                "biz_id" => {
-                    field_role = FieldKind::BizId;
                 }
                 "group" => {
                     field_role = FieldKind::Group;
@@ -1140,7 +919,6 @@ fn parse_subset_attr(
             ty,
             attrs: field.origin.attrs.clone(),
             is_manual_ty,
-            kind: field.kind,
         });
     }
 
@@ -1169,14 +947,4 @@ fn serde_derive_attrs() -> Vec<syn::Attribute> {
             #[serde(rename_all = "camelCase")]
         },
     ]
-}
-
-pub fn subset_full_ident(name: &syn::Ident) -> Ident {
-    Ident::new(&format!("{}Full", name), name.span())
-}
-
-impl FieldKind {
-    fn is_group(&self) -> bool {
-        matches!(self, FieldKind::Group)
-    }
 }

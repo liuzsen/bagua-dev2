@@ -2,18 +2,18 @@ use std::ops::{Deref, DerefMut};
 
 use super::{
     field::{Reset, Unchanged, Unloaded},
-    GuardedStruct,
+    FieldGroup,
 };
 
-pub struct FlattenStruct<T: GuardedStruct>(T);
+pub struct FieldGroupWrapper<T: FieldGroup>(T);
 
-impl<T: GuardedStruct> FlattenStruct<T> {
+impl<T: FieldGroup> FieldGroupWrapper<T> {
     pub fn new(entity: T) -> Self {
         Self(entity)
     }
 }
 
-impl<T: GuardedStruct> Deref for FlattenStruct<T> {
+impl<T: FieldGroup> Deref for FieldGroupWrapper<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -21,29 +21,29 @@ impl<T: GuardedStruct> Deref for FlattenStruct<T> {
     }
 }
 
-impl<T: GuardedStruct> DerefMut for FlattenStruct<T> {
+impl<T: FieldGroup> DerefMut for FieldGroupWrapper<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<T: GuardedStruct> Reset<FlattenStruct<T>> for T {
-    fn reset(self) -> FlattenStruct<T> {
-        FlattenStruct(self)
+impl<T: FieldGroup> Reset<FieldGroupWrapper<T>> for T {
+    fn reset(self) -> FieldGroupWrapper<T> {
+        FieldGroupWrapper(self)
     }
 }
 
-impl<T: GuardedStruct> Unchanged<FlattenStruct<T>> for T {
-    fn unchanged(self) -> FlattenStruct<T> {
-        FlattenStruct(self)
+impl<T: FieldGroup> Unchanged<FieldGroupWrapper<T>> for T {
+    fn unchanged(self) -> FieldGroupWrapper<T> {
+        FieldGroupWrapper(self)
     }
 }
 
-impl<T: GuardedStruct> Unloaded for FlattenStruct<T>
+impl<T: FieldGroup> Unloaded for FieldGroupWrapper<T>
 where
     T: Unloaded,
 {
     fn unloaded() -> Self {
-        FlattenStruct(T::unloaded())
+        FieldGroupWrapper(T::unloaded())
     }
 }

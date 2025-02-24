@@ -1,10 +1,30 @@
 use std::ops::Deref;
 
-#[derive(Clone, PartialEq, Eq, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Field<T> {
     Unloaded,
     Unchanged(T),
     Set(T),
+}
+
+impl<T> PartialEq<T> for Field<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &T) -> bool {
+        let this = self.value_ref();
+        this == other
+    }
+}
+
+impl<T> PartialEq<&T> for Field<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &&T) -> bool {
+        let this = self.value_ref();
+        this == *other
+    }
 }
 
 impl<T> Deref for Field<T> {

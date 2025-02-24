@@ -1149,6 +1149,7 @@ dependencies = [
  "linkme",
  "proc-macro2",
  "quote",
+ "serde",
  "syn",
  "tokio",
 ]

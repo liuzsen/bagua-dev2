@@ -10,7 +10,7 @@ pub mod parent;
 pub mod subset;
 pub mod updater;
 
-pub trait Entity: GuardedStruct {
+pub trait Entity: FieldGroup {
     type Id<'a>: Eq;
 
     type SysId: Eq;
@@ -39,8 +39,9 @@ pub trait ChildEntity: Entity {
     type Parent: Entity;
 }
 
-pub trait GuardedStruct {
-    type Updater: Updater<GuardedStruct = Self>;
+pub trait FieldGroup {
+    type Updater: Updater<FieldGroup = Self>;
+    type SubsetFull;
 
     fn update_fields(&mut self, updater: Self::Updater);
 }
